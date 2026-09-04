@@ -28,7 +28,7 @@ PL_TEAMS = sorted([
     "Nottingham Forest", "Sunderland", "Tottenham"
 ])
 
-# Official Premier League CDN Badge IDs (Uniform & Permanent)
+# Official Premier League CDN Badge IDs
 CLUB_BADGES = {
     "Arsenal": "https://resources.premierleague.com/premierleague/badges/t3.png",
     "Aston Villa": "https://resources.premierleague.com/premierleague/badges/t7.png",
@@ -349,7 +349,7 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
             st.write("---")
             st.markdown(f"##### 🔍 Staged Matches ({len(df_preview)} Detected)")
 
-            preview_cols = ["Status", "Gameweek", "Home Team", "Away Team", "Actual In-Play", "Total Match Time", "Home Total Wasted", "Away Total Wasted"]
+            preview_cols = ["Status", "Gameweek", "Home Team", "Away Team", "Actual In-Play", "Total Match Time", "VAR Checks", "Home Total Wasted", "Away Total Wasted"]
             st.dataframe(df_preview[preview_cols], use_container_width=True, hide_index=True)
 
             valid_matches = [m for m in parsed_batch if m["_is_valid"]]
@@ -503,8 +503,15 @@ st.divider()
 if st.session_state.match_log.empty:
     st.info("No fixtures recorded yet. Upload match files above to populate the league table.")
 else:
-    tab1, tab2 = st.tabs(["🏆 Team Standings (Averages)", "📝 Live Spreadsheet Editor & Export"])
+    tab1, tab2, tab3 = st.tabs([
+        "🏆 Team Standings (Averages)",
+        "📺 VAR Stoppage Impact",
+        "📝 Live Spreadsheet Editor & Export"
+    ])
 
+    # ==========================
+    # TAB 1: MAIN LEAGUE TABLE
+    # ==========================
     with tab1:
         team_rows = []
         for _, r in st.session_state.match_log.iterrows():
@@ -583,7 +590,6 @@ else:
         
         col_select, col_type = st.columns([1, 1.8])
         with col_select:
-            # Sorted alphabetically regardless of table sort
             alphabetical_teams = sorted(standings["Team"].unique())
             selected_team = st.selectbox("Select Club", alphabetical_teams)
         with col_type:
@@ -602,14 +608,12 @@ else:
 
         cg1, cg2 = st.columns([1.3, 1])
 
-        # Prepare team fixture history
         team_fixtures = st.session_state.match_log[
             (st.session_state.match_log["Home Team"] == selected_team) |
             (st.session_state.match_log["Away Team"] == selected_team)
         ].copy()
         team_fixtures = team_fixtures.sort_values(by="Gameweek").reset_index(drop=True)
 
-        # OPTION 1: DEAD-BALL DELAY PROFILE
         if chart_type == "Dead-Ball Delay Profile (Bar Chart)":
             with cg1:
                 fig, ax = plt.subplots(figsize=(10, 5.5), facecolor="#0e1621")
@@ -653,7 +657,6 @@ Biggest delay factors:
 Data tracked by @EffectiveMins #PremierLeague #PL"""
                 st.text_area("Draft Post", value=post_text, height=200)
 
-        # OPTION 2: IN-PLAY TREND (LINE CHART)
         elif chart_type == "In-Play Trend Across Gameweeks (Line Chart)":
             with cg1:
                 fig, ax = plt.subplots(figsize=(10, 5.5), facecolor="#0e1621")
@@ -673,8 +676,6 @@ Data tracked by @EffectiveMins #PremierLeague #PL"""
                     time_strings.append(match["Actual In-Play"])
 
                 ax.plot(range(len(x_labels)), y_vals, color="#00d2ff", linewidth=2.8, marker="o", markersize=9, markerfacecolor="#ffffff", markeredgecolor="#00d2ff", zorder=4)
-
-                # Benchmark line at 60 minutes
                 ax.axhline(60.0, color="#ff495c", linestyle="--", alpha=0.55, linewidth=1.5, label="60-Min Benchmark", zorder=2)
 
                 for idx, (val, t_str) in enumerate(zip(y_vals, time_strings)):
@@ -733,7 +734,6 @@ Game-by-game breakdown:
 Follow @EffectiveMins for full Premier League stoppage metrics #PL #{selected_team.replace(' ', '')}"""
                 st.text_area("Draft Trend Post", value=trend_post, height=230)
 
-        # OPTION 3: TIME WASTING TREND (LINE CHART)
         else:
             with cg1:
                 fig, ax = plt.subplots(figsize=(10, 5.5), facecolor="#0e1621")
@@ -754,7 +754,6 @@ Follow @EffectiveMins for full Premier League stoppage metrics #PL #{selected_te
                     waste_vals.append(waste_secs / 60.0)
                     waste_strings.append(match[waste_col])
 
-                # Orange / Amber line for delay/waste tracking
                 ax.plot(range(len(x_labels)), waste_vals, color="#ffb800", linewidth=2.8, marker="s", markersize=9, markerfacecolor="#ffffff", markeredgecolor="#ffb800", zorder=4)
 
                 for idx, (val, t_str) in enumerate(zip(waste_vals, waste_strings)):
@@ -813,8 +812,129 @@ Game-by-game stoppage delay:
 Full breakdown tracked by @EffectiveMins #PremierLeague #PL #{selected_team.replace(' ', '')}"""
                 st.text_area("Draft Waste Trend Post", value=waste_post, height=230)
 
-    # --- TAB 2: LIVE SPREADSHEET EDITOR ---
+    # ==========================
+    # TAB 2: VAR STOPPAGE IMPACT
+    # ==========================
     with tab2:
+        st.subheader("📺 Premier League VAR Review Impact")
+        st.caption("Tracking how video reviews affect stoppage time, flow, and total dead time per club.")
+
+        # Build VAR calculation table
+        var_rows = []
+        for _, r in st.session_state.match_log.iterrows():
+            var_s = time_to_seconds(r["VAR Checks"])
+            tot_s = time_to_seconds(r["Total Match Time"])
+            has_var = 1 if var_s > 0 else 0
+
+            # Both clubs involved experience the review
+            var_rows.append({
+                "Team": r["Home Team"],
+                "VAR_Sec": var_s,
+                "Total_Sec": tot_s,
+                "Has_VAR": has_var,
+                "Max_VAR_Sec": var_s
+            })
+            var_rows.append({
+                "Team": r["Away Team"],
+                "VAR_Sec": var_s,
+                "Total_Sec": tot_s,
+                "Has_VAR": has_var,
+                "Max_VAR_Sec": var_s
+            })
+
+        df_var_calc = pd.DataFrame(var_rows)
+
+        # 1. Headline summary cards across all matches
+        total_league_var_sec = st.session_state.match_log["VAR Checks"].apply(time_to_seconds).sum()
+        matches_with_var = (st.session_state.match_log["VAR Checks"].apply(time_to_seconds) > 0).sum()
+        total_fixtures_count = len(st.session_state.match_log)
+        pct_var_fixtures = round((matches_with_var / total_fixtures_count * 100), 1) if total_fixtures_count > 0 else 0.0
+
+        longest_var_sec = st.session_state.match_log["VAR Checks"].apply(time_to_seconds).max()
+        longest_var_match = st.session_state.match_log[st.session_state.match_log["VAR Checks"].apply(time_to_seconds) == longest_var_sec]
+        longest_var_label = "None"
+        if not longest_var_match.empty and longest_var_sec > 0:
+            top_row = longest_var_match.iloc[0]
+            longest_var_label = f"{top_row['VAR Checks']} ({top_row['Home Team'][:3].upper()} vs {top_row['Away Team'][:3].upper()})"
+
+        v_c1, v_c2, v_c3, v_c4 = st.columns(4)
+        with v_c1:
+            st.metric("Total Season VAR Stoppage", seconds_to_time(total_league_var_sec))
+        with v_c2:
+            st.metric("Fixtures with VAR Checks", f"{matches_with_var} / {total_fixtures_count} ({pct_var_fixtures}%)")
+        with v_c3:
+            avg_review_len = round(total_league_var_sec / matches_with_var) if matches_with_var > 0 else 0
+            st.metric("Average Review Delay", seconds_to_time(avg_review_len))
+        with v_c4:
+            st.metric("Longest Single Review", longest_var_label)
+
+        st.divider()
+
+        # 2. Club-by-Club VAR Table
+        st.markdown("##### 📊 Club VAR Exposure")
+        var_grouped = df_var_calc.groupby("Team").agg({
+            "VAR_Sec": ["count", "sum", "mean", "max"],
+            "Has_VAR": "sum"
+        }).reset_index()
+
+        var_grouped.columns = ["Team", "Matches", "Total_VAR_Sec", "Avg_VAR_Sec", "Max_VAR_Sec", "VAR_Matches"]
+        var_grouped["Badge"] = var_grouped["Team"].map(CLUB_BADGES)
+        var_grouped["Total VAR Delay"] = var_grouped["Total_VAR_Sec"].apply(seconds_to_time)
+        var_grouped["Avg VAR Delay / 90"] = var_grouped["Avg_VAR_Sec"].apply(seconds_to_time)
+        var_grouped["Longest Check"] = var_grouped["Max_VAR_Sec"].apply(seconds_to_time)
+        var_grouped["VAR Match Rate %"] = ((var_grouped["VAR_Matches"] / var_grouped["Matches"].replace(0, 1)) * 100).round(1)
+
+        sort_var = st.selectbox(
+            "Sort VAR Table By:",
+            [
+                ("Total_VAR_Sec", "Total VAR Stoppage (Highest First)", False),
+                ("Avg_VAR_Sec", "Average VAR Delay / 90 (Highest First)", False),
+                ("Max_VAR_Sec", "Longest Check (Highest First)", False),
+                ("VAR Match Rate %", "VAR Review Rate % (Highest First)", False)
+            ],
+            format_func=lambda x: x[1]
+        )
+
+        var_grouped = var_grouped.sort_values(by=sort_var[0], ascending=sort_var[2])
+
+        var_cols_show = [
+            "Badge", "Team", "Matches", "VAR_Matches", "VAR Match Rate %",
+            "Total VAR Delay", "Avg VAR Delay / 90", "Longest Check"
+        ]
+
+        st.dataframe(
+            var_grouped[var_cols_show],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Badge": st.column_config.ImageColumn("Badge", width="small")
+            }
+        )
+
+        st.divider()
+
+        # 3. Match-Level VAR Check Log
+        st.markdown("##### ⏱️ Match Review Log (Ranked by Check Length)")
+        match_var_log = st.session_state.match_log.copy()
+        match_var_log["VAR_Sec"] = match_var_log["VAR Checks"].apply(time_to_seconds)
+        match_var_log["Total_Sec"] = match_var_log["Total Match Time"].apply(time_to_seconds)
+        match_var_log = match_var_log[match_var_log["VAR_Sec"] > 0].sort_values(by="VAR_Sec", ascending=False)
+
+        if match_var_log.empty:
+            st.info("No fixtures have recorded significant VAR reviews yet.")
+        else:
+            match_var_log["Match"] = match_var_log["Home Team"] + " vs " + match_var_log["Away Team"]
+            match_var_log["VAR Share of Match %"] = ((match_var_log["VAR_Sec"] / match_var_log["Total_Sec"].replace(0, 1)) * 100).round(1)
+            
+            show_match_var = match_var_log[[
+                "Gameweek", "Match", "VAR Checks", "Total Match Time", "Actual In-Play", "VAR Share of Match %"
+            ]]
+            st.dataframe(show_match_var, use_container_width=True, hide_index=True)
+
+    # ==========================
+    # TAB 3: LIVE SPREADSHEET EDITOR
+    # ==========================
+    with tab3:
         st.markdown("💡 **Tip:** Double-click any cell to edit numbers directly. Select rows using the checkboxes on the left and hit `Delete` on your keyboard to remove specific fixtures.")
 
         edited_df = st.data_editor(
