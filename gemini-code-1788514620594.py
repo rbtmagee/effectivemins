@@ -21,12 +21,13 @@ st.markdown("""
 
 DATA_FILE = "effective_mins_data.csv"
 
+# 2026/27 Premier League Teams
 PL_TEAMS = sorted([
     "Arsenal", "Aston Villa", "Bournemouth", "Brentford", "Brighton",
-    "Chelsea", "Crystal Palace", "Everton", "Fulham", "Ipswich Town",
-    "Leeds United", "Leicester City", "Liverpool", "Manchester City",
-    "Manchester United", "Newcastle United", "Nottingham Forest",
-    "Southampton", "Tottenham", "West Ham", "Wolves"
+    "Chelsea", "Coventry City", "Crystal Palace", "Everton", "Fulham",
+    "Hull City", "Ipswich Town", "Leeds United", "Liverpool",
+    "Manchester City", "Manchester United", "Newcastle United",
+    "Nottingham Forest", "Sunderland", "Tottenham"
 ])
 
 # --- HELPER TIME CONVERSIONS ---
@@ -101,7 +102,7 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
         st.markdown("**Option 2: Upload File**")
         uploaded_img = st.file_uploader("Upload 365Scores Graphic", type=["png", "jpg", "jpeg", "webp"], label_visibility="collapsed")
 
-    # Resolve image source
+    # Resolve active image
     active_image_bytes = None
     active_mime_type = "image/png"
 
@@ -109,11 +110,11 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
         buf = io.BytesIO()
         paste_result.image_data.save(buf, format="PNG")
         active_image_bytes = buf.getvalue()
-        st.image(paste_result.image_data, caption="Clipboard Image Loaded", width=340)
+        st.image(paste_result.image_data, caption="Clipboard Graphic Loaded", width=340)
     elif uploaded_img is not None:
         active_image_bytes = uploaded_img.getvalue()
         active_mime_type = uploaded_img.type or "image/png"
-        st.image(uploaded_img, caption="Uploaded File Loaded", width=340)
+        st.image(uploaded_img, caption="Uploaded Graphic Loaded", width=340)
 
     st.write("")
     if st.button("🚀 Extract & Save Match Record", type="primary"):
@@ -256,7 +257,6 @@ else:
         standings["Avg Corners Delay"] = standings["Corners_Sec"].apply(seconds_to_time)
         standings["Avg Other Delay"] = standings["Other_Sec"].apply(seconds_to_time)
 
-        # Sorting selection
         sort_mode = st.selectbox(
             "Sort Standings By:",
             [
