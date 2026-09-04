@@ -3,3 +3,4 @@ pandas
 matplotlib
 google-genai
 pillow
+streamlit-paste-button
