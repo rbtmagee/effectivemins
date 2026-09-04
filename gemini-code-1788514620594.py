@@ -39,16 +39,14 @@ MATCH_COLUMNS = [
     "Home Total Wasted", "Away Total Wasted"
 ]
 
-# --- UTILITY & SANITISATION HELPERS ---
+# --- UTILITY HELPERS ---
 def clean_val(val) -> str:
-    """Normalises empty or null values into standard strings."""
     if pd.isna(val) or val is None:
         return "00:00"
     s = str(val).strip().replace("–", "-").replace("—", "-")
     return s if s else "00:00"
 
 def time_to_seconds(val: str) -> int:
-    """Converts MM:SS strings safely to integer seconds."""
     s_val = clean_val(val)
     if ":" not in s_val or s_val.startswith("-"):
         return 0
@@ -59,44 +57,76 @@ def time_to_seconds(val: str) -> int:
         return 0
 
 def seconds_to_time(seconds: int) -> str:
-    """Converts seconds back into MM:SS format."""
     m, s = divmod(int(round(seconds)), 60)
     return f"{m:02d}:{s:02d}"
 
-# --- DIRECT ZERO-AI 365SCORES TEXT PARSER ---
+def match_club_name(raw_name: str) -> str:
+    """Matches raw text names like 'Fulham FC' or 'Newcastle Utd' to our PL list."""
+    if not raw_name:
+        return ""
+    cleaned = raw_name.lower().strip()
+    for team in PL_TEAMS:
+        t_low = team.lower()
+        if t_low in cleaned or cleaned in t_low:
+            return team
+    # Common shorthand aliases
+    aliases = {
+        "man utd": "Manchester United",
+        "man city": "Manchester City",
+        "newcastle utd": "Newcastle United",
+        "forest": "Nottingham Forest",
+        "palace": "Crystal Palace",
+        "spurs": "Tottenham"
+    }
+    for alias, canonical in aliases.items():
+        if alias in cleaned:
+            return canonical
+    return raw_name.strip()
+
+# --- FULL ZERO-AI 365SCORES TEXT PARSER ---
 def parse_365_raw_text(content: str) -> dict:
-    """
-    Parses expanded 365Scores text reports without any third-party AI APIs.
-    Supports both uploaded .txt web saves and pasted clipboard text.
-    """
     stats = {}
 
-    # 1. Headline Match Durations
+    # 1. Automatic Gameweek Detection (e.g. 'Round 1' or 'Premier League, Round 2')
+    gw_m = re.search(r"Premier\s+League,?\s+Round\s+(\d+)", content, re.IGNORECASE)
+    if not gw_m:
+        gw_m = re.search(r"Round\s+(\d+)", content, re.IGNORECASE)
+    stats["detected_gw"] = int(gw_m.group(1)) if gw_m else None
+
+    # 2. Automatic Fixture Detection (e.g. 'Fulham Vs Chelsea')
+    teams_m = re.search(r"([A-Za-z0-9\s&.-]+?)\s+[Vv]s\s+([A-Za-z0-9\s&.-]+?)(?:\r?\n|<)", content)
+    if teams_m:
+        stats["detected_home"] = match_club_name(teams_m.group(1))
+        stats["detected_away"] = match_club_name(teams_m.group(2))
+    else:
+        stats["detected_home"] = None
+        stats["detected_away"] = None
+
+    # 3. Match Durations
     act_m = re.search(r"Actual\s+(\d{1,2}:\d{2})", content, re.IGNORECASE)
     tot_m = re.search(r"Total\s+(\d{1,2}:\d{2})", content, re.IGNORECASE)
     stats["actual_in_play"] = act_m.group(1) if act_m else "00:00"
     stats["total_time"] = tot_m.group(1) if tot_m else "90:00"
 
-    # 2. Game Stops & Longest Run
-    stops_m = re.search(r"Game\s*Stops\s*(?:\n|\s+)*(\d+)", content, re.IGNORECASE)
-    longest_m = re.search(r"Longest\s*In-Play\s*(?:\n|\s+)*(\d{1,2}:\d{2})", content, re.IGNORECASE)
+    # 4. Game Flow Metrics
+    stops_m = re.search(r"Game\s*Stops\s*(?:\r?\n|\s+)*(\d+)", content, re.IGNORECASE)
+    longest_m = re.search(r"Longest\s*In-Play\s*(?:\r?\n|\s+)*(\d{1,2}:\d{2})", content, re.IGNORECASE)
     stats["game_stops"] = int(stops_m.group(1)) if stops_m else 0
     stats["longest_in_play"] = longest_m.group(1) if longest_m else "00:00"
 
-    # 3. Added Time Metrics
-    ann_m = re.search(r"(\d{1,2}:\d{2})\s*(?:\n|\s+)*Announced", content, re.IGNORECASE)
-    act_add_m = re.search(r"(\d{1,2}:\d{2})\s*(?:\n|\s+)*Actual\s+Added", content, re.IGNORECASE)
+    # 5. Added Time Splits
+    ann_m = re.search(r"(\d{1,2}:\d{2})\s*(?:\r?\n|\s+)*Announced", content, re.IGNORECASE)
+    act_add_m = re.search(r"(\d{1,2}:\d{2})\s*(?:\r?\n|\s+)*Actual\s+Added", content, re.IGNORECASE)
     stats["announced_added"] = ann_m.group(1) if ann_m else "00:00"
     stats["actual_added"] = act_add_m.group(1) if act_add_m else "00:00"
     stats["played_added"] = "00:00"
     stats["var_checks"] = "00:00"
 
-    # Check for significant VAR checks line if present
-    var_m = re.search(r"(?:Significant\s+)?VAR\s*Checks\s*(?:\n|\s+)*(\d{1,2}:\d{2})", content, re.IGNORECASE)
+    var_m = re.search(r"(?:Significant\s+)?VAR\s*Checks\s*(?:\r?\n|\s+)*(\d{1,2}:\d{2})", content, re.IGNORECASE)
     if var_m:
         stats["var_checks"] = var_m.group(1)
 
-    # 4. Dead-Ball Stoppage Categories (Split after "Time Wasted On")
+    # 6. Dead-Ball Time Wasted Categories
     wasted_section = content
     if "Time Wasted On" in content:
         wasted_section = content.split("Time Wasted On", 1)[1]
@@ -111,8 +141,7 @@ def parse_365_raw_text(content: str) -> dict:
     ]
 
     for key, label in categories:
-        # Handles both multi-line text files and single-line copies
-        pattern = rf"(\d{{1,2}}:\d{{2}})\s*(?:\n|\s+)*{label}\s*(?:\n|\s+)*(\d{{1,2}}:\d{{2}})"
+        pattern = rf"(\d{{1,2}}:\d{{2}})\s*(?:\r?\n|\s+)*{label}\s*(?:\r?\n|\s+)*(\d{{1,2}}:\d{{2}})"
         match = re.search(pattern, wasted_section, re.IGNORECASE)
         if match:
             stats[f"home_{key}"] = match.group(1)
@@ -123,7 +152,7 @@ def parse_365_raw_text(content: str) -> dict:
 
     return stats
 
-# --- INITIALISE OR LOAD DATABASE ---
+# --- DATABASE LOAD ---
 if os.path.exists(DATA_FILE):
     try:
         st.session_state.match_log = pd.read_csv(DATA_FILE, encoding="utf-8")
@@ -132,17 +161,16 @@ if os.path.exists(DATA_FILE):
 else:
     st.session_state.match_log = pd.DataFrame(columns=MATCH_COLUMNS)
 
-# Ensure schema alignment
 for col in MATCH_COLUMNS:
     if col not in st.session_state.match_log.columns:
         st.session_state.match_log[col] = "00:00" if "Time" in col or "In-Play" in col or "Added" in col or "Wasted" in col else 0
 
 st.title("⏱️ EffectiveMins: Premier League Stoppage Tracker")
 
-# --- SIDEBAR: EXCEL IMPORT & MASTER TEMPLATE ---
+# --- SIDEBAR: EXCEL MASTER SYNC ---
 with st.sidebar:
     st.header("📂 Master Spreadsheet Sync")
-    st.caption("Upload your master Excel (.xlsx) or CSV file to sync your database instantly.")
+    st.caption("Upload your master Excel (.xlsx) or CSV file to update all records instantly.")
 
     uploaded_master = st.file_uploader("Upload Spreadsheet", type=["xlsx", "csv"], label_visibility="collapsed")
     if uploaded_master is not None:
@@ -158,22 +186,20 @@ with st.sidebar:
 
             st.session_state.match_log = df_imported[MATCH_COLUMNS].copy()
             st.session_state.match_log.to_csv(DATA_FILE, index=False, encoding="utf-8")
-            st.success(f"Loaded {len(df_imported)} matches from spreadsheet!")
+            st.success(f"Synced {len(df_imported)} fixtures from spreadsheet!")
             st.rerun()
         except Exception as e:
             st.error(f"Error reading file: {str(e)}")
 
     st.divider()
 
-    # Download blank template for Excel / Google Sheets
-    st.markdown("**Need an Excel template?**")
     blank_template = pd.DataFrame(columns=MATCH_COLUMNS)
     template_buffer = io.BytesIO()
     with pd.ExcelWriter(template_buffer, engine='openpyxl') as writer:
         blank_template.to_excel(writer, index=False, sheet_name="EffectiveMins")
 
     st.download_button(
-        label="📥 Download Blank Excel Template",
+        label="📥 Download Blank Template",
         data=template_buffer.getvalue(),
         file_name="effective_mins_template.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -195,41 +221,46 @@ with st.sidebar:
     st.markdown("**@EffectiveMins** Analytics Engine")
 
 # --- MATCH INGESTION SECTION ---
-with st.expander("➕ Log New Fixture (Text Parser or Manual)", expanded=st.session_state.match_log.empty):
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        gw = st.number_input("Gameweek", min_value=1, max_value=38, value=1, step=1)
-    with c2:
-        home_team = st.selectbox("Home Team", PL_TEAMS, index=0)
-    with c3:
-        away_team = st.selectbox("Away Team", PL_TEAMS, index=1)
+with st.expander("➕ Log New Fixture", expanded=st.session_state.match_log.empty):
+    ingest_tab1, ingest_tab2 = st.tabs(["📄 Automatic .txt Parser", "✍️ Manual Entry Form"])
 
-    ingest_tab1, ingest_tab2 = st.tabs(["📄 365Scores Web Text Parser", "✍️ Manual Form Entry"])
-
-    # TAB 1: ZERO-AI TEXT PARSER
+    # TAB 1: FULL AUTO TEXT PARSER
     with ingest_tab1:
-        st.caption("Upload your saved match report `.txt` file or paste the text copied directly from the expanded 365Scores page.")
+        st.markdown("Upload the saved `.txt` file or paste text copied from the expanded 365Scores page. **Teams and Gameweek are detected automatically.**")
 
         input_mode = st.radio("Input Format:", ["📁 Upload .txt File", "📋 Paste Copied Text"], horizontal=True)
 
         raw_report_text = ""
-
         if input_mode == "📁 Upload .txt File":
             uploaded_txt = st.file_uploader("Upload Match Report File", type=["txt"], label_visibility="collapsed")
             if uploaded_txt is not None:
                 raw_report_text = uploaded_txt.read().decode("utf-8", errors="ignore")
-                st.success("Text report loaded successfully!")
         else:
             raw_report_text = st.text_area(
                 "Paste Report Text Here:",
-                placeholder="Actual 60:58\nTotal 96:20\nGame Stops 85\n...",
-                height=180
+                placeholder="Fulham Vs Chelsea\nEngland, Premier League, Round 1\nActual 60:58\nTotal 96:20\n...",
+                height=160
             )
+
+        # Preview auto-detected match details
+        if raw_report_text.strip():
+            preview_stats = parse_365_raw_text(raw_report_text)
+            st.write("---")
+            st.markdown("##### 🔍 Detected Match Details:")
+            det_c1, det_c2, det_c3, det_c4 = st.columns(4)
+            with det_c1:
+                st.metric("Gameweek", preview_stats["detected_gw"] or "Unknown")
+            with det_c2:
+                st.metric("Home Team", preview_stats["detected_home"] or "Unknown")
+            with det_c3:
+                st.metric("Away Team", preview_stats["detected_away"] or "Unknown")
+            with det_c4:
+                st.metric("Actual In-Play", preview_stats["actual_in_play"])
 
         st.write("")
         btn_c1, btn_c2 = st.columns([2, 1])
         with btn_c1:
-            parse_pressed = st.button("🚀 Extract & Record Fixture", type="primary", use_container_width=True)
+            parse_pressed = st.button("🚀 Record Match to Database", type="primary", use_container_width=True)
         with btn_c2:
             undo_pressed = st.button("↩️ Undo Last Entry", type="secondary", use_container_width=True)
 
@@ -244,20 +275,20 @@ with st.expander("➕ Log New Fixture (Text Parser or Manual)", expanded=st.sess
                 st.info("No fixtures to undo.")
 
         if parse_pressed:
-            if home_team == away_team:
-                st.error("Home and Away teams must be different.")
-            elif not raw_report_text.strip():
+            if not raw_report_text.strip():
                 st.error("Please upload a .txt file or paste report text first.")
             else:
                 parsed = parse_365_raw_text(raw_report_text)
 
                 if parsed["actual_in_play"] == "00:00" and parsed["home_total_wasted"] == "00:00":
-                    st.error("Could not find stoppage metrics. Make sure 'See More' was clicked on 365Scores prior to copying.")
+                    st.error("Could not find stoppage metrics. Make sure 'See More' was clicked on 365Scores before saving.")
+                elif not parsed["detected_home"] or not parsed["detected_away"]:
+                    st.error("Could not detect the club names automatically. Please check the text or use the manual form.")
                 else:
                     new_entry = {
-                        "Gameweek": int(gw),
-                        "Home Team": home_team,
-                        "Away Team": away_team,
+                        "Gameweek": parsed["detected_gw"] if parsed["detected_gw"] else 1,
+                        "Home Team": parsed["detected_home"],
+                        "Away Team": parsed["detected_away"],
                         "Actual In-Play": parsed["actual_in_play"],
                         "Total Match Time": parsed["total_time"],
                         "VAR Checks": parsed["var_checks"],
@@ -285,12 +316,20 @@ with st.expander("➕ Log New Fixture (Text Parser or Manual)", expanded=st.sess
                         ignore_index=True
                     )
                     st.session_state.match_log.to_csv(DATA_FILE, index=False, encoding="utf-8")
-                    st.success(f"Recorded {home_team} vs {away_team} successfully!")
+                    st.success(f"Recorded Gameweek {new_entry['Gameweek']}: {new_entry['Home Team']} vs {new_entry['Away Team']} successfully!")
                     st.rerun()
 
     # TAB 2: MANUAL ENTRY FORM
     with ingest_tab2:
         with st.form("manual_entry_form", clear_on_submit=True):
+            mc1, mc2, mc3 = st.columns(3)
+            with mc1:
+                man_gw = st.number_input("Gameweek", min_value=1, max_value=38, value=1, step=1)
+            with mc2:
+                man_home = st.selectbox("Home Team", PL_TEAMS, index=0)
+            with mc3:
+                man_away = st.selectbox("Away Team", PL_TEAMS, index=1)
+
             st.markdown("##### Match In-Play & Flow")
             m1, m2, m3, m4, m5 = st.columns(5)
             with m1:
@@ -342,9 +381,9 @@ with st.expander("➕ Log New Fixture (Text Parser or Manual)", expanded=st.sess
 
             if st.form_submit_button("Save Record Manually", type="primary"):
                 manual_row = {
-                    "Gameweek": int(gw),
-                    "Home Team": home_team,
-                    "Away Team": away_team,
+                    "Gameweek": int(man_gw),
+                    "Home Team": man_home,
+                    "Away Team": man_away,
                     "Actual In-Play": clean_val(man_inplay),
                     "Total Match Time": clean_val(man_total or "90:00"),
                     "VAR Checks": clean_val(man_var),
@@ -368,7 +407,7 @@ with st.expander("➕ Log New Fixture (Text Parser or Manual)", expanded=st.sess
                 }
                 st.session_state.match_log = pd.concat([st.session_state.match_log, pd.DataFrame([manual_row])], ignore_index=True)
                 st.session_state.match_log.to_csv(DATA_FILE, index=False, encoding="utf-8")
-                st.success(f"Recorded {home_team} vs {away_team} manually!")
+                st.success(f"Recorded {man_home} vs {man_away} manually!")
                 st.rerun()
 
 st.divider()
@@ -382,7 +421,6 @@ else:
     with tab1:
         team_rows = []
         for _, r in st.session_state.match_log.iterrows():
-            # Home side entry
             team_rows.append({
                 "Team": r["Home Team"],
                 "InPlay_Sec": time_to_seconds(r["Actual In-Play"]),
@@ -394,7 +432,6 @@ else:
                 "Other_Sec": time_to_seconds(r["Home Other"]),
                 "TotalWasted_Sec": time_to_seconds(r["Home Total Wasted"])
             })
-            # Away side entry
             team_rows.append({
                 "Team": r["Away Team"],
                 "InPlay_Sec": time_to_seconds(r["Actual In-Play"]),
@@ -421,7 +458,6 @@ else:
         standings["Avg Corners Delay"] = standings["Corners_Sec"].apply(seconds_to_time)
         standings["Avg Other Delay"] = standings["Other_Sec"].apply(seconds_to_time)
 
-        # Dynamic Sorting Selector
         sort_mode = st.selectbox(
             "Sort Standings By:",
             [
@@ -446,7 +482,7 @@ else:
 
         st.divider()
 
-        # --- TWITTER INFOGRAPHIC CARD GENERATOR ---
+        # --- TWITTER CARD GENERATOR ---
         st.subheader("Generate Graphic for @EffectiveMins")
         selected_team = st.selectbox("Select Club for Graphic Card", standings["Team"])
         t_row = standings[standings["Team"] == selected_team].iloc[0]
@@ -494,7 +530,7 @@ Data tracked by @EffectiveMins #PremierLeague #PL"""
 
     # --- TAB 2: LIVE SPREADSHEET EDITOR ---
     with tab2:
-        st.markdown("💡 **Tip:** Double-click any cell to edit numbers directly. Select rows using the checkboxes on the left and hit `Delete` on your keyboard to remove specific fixtures.")
+        st.markdown("💡 **Tip:** Double-click any cell to edit numbers directly. Select rows using the checkboxes on the left and hit `Delete` on your keyboard to remove fixtures.")
 
         edited_df = st.data_editor(
             st.session_state.match_log,
