@@ -160,7 +160,7 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
                     """
 
                     response = client.models.generate_content(
-                        model="gemini-2.5-flash",
+                        model="gemini-3.6-flash",
                         contents=[
                             types.Part.from_bytes(data=active_image_bytes, mime_type=active_mime_type),
                             prompt
