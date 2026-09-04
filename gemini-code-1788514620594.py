@@ -28,6 +28,30 @@ PL_TEAMS = sorted([
     "Nottingham Forest", "Sunderland", "Tottenham"
 ])
 
+# High-resolution badge CDN mappings
+CLUB_BADGES = {
+    "Arsenal": "https://resources.premierleague.com/premierleague/badges/t3.png",
+    "Aston Villa": "https://resources.premierleague.com/premierleague/badges/t7.png",
+    "Bournemouth": "https://resources.premierleague.com/premierleague/badges/t91.png",
+    "Brentford": "https://resources.premierleague.com/premierleague/badges/t94.png",
+    "Brighton": "https://resources.premierleague.com/premierleague/badges/t36.png",
+    "Chelsea": "https://resources.premierleague.com/premierleague/badges/t8.png",
+    "Coventry City": "https://upload.wikimedia.org/wikipedia/en/thumb/9/94/Coventry_City_FC_logo.svg/240px-Coventry_City_FC_logo.svg.png",
+    "Crystal Palace": "https://resources.premierleague.com/premierleague/badges/t31.png",
+    "Everton": "https://resources.premierleague.com/premierleague/badges/t11.png",
+    "Fulham": "https://resources.premierleague.com/premierleague/badges/t54.png",
+    "Hull City": "https://upload.wikimedia.org/wikipedia/en/thumb/5/54/Hull_City_A.F.C._logo.svg/240px-Hull_City_A.F.C._logo.svg.png",
+    "Ipswich Town": "https://resources.premierleague.com/premierleague/badges/t40.png",
+    "Leeds United": "https://resources.premierleague.com/premierleague/badges/t2.png",
+    "Liverpool": "https://resources.premierleague.com/premierleague/badges/t14.png",
+    "Manchester City": "https://resources.premierleague.com/premierleague/badges/t43.png",
+    "Manchester United": "https://resources.premierleague.com/premierleague/badges/t1.png",
+    "Newcastle United": "https://resources.premierleague.com/premierleague/badges/t4.png",
+    "Nottingham Forest": "https://resources.premierleague.com/premierleague/badges/t17.png",
+    "Sunderland": "https://resources.premierleague.com/premierleague/badges/t56.png",
+    "Tottenham": "https://resources.premierleague.com/premierleague/badges/t6.png"
+}
+
 CLUB_PATTERNS = [
     ("Nottingham Forest", ["nottingham forest", "nottingham", "nott'm forest", "forest"]),
     ("Manchester United", ["manchester united", "manchester utd", "man utd", "man united"]),
@@ -512,6 +536,7 @@ else:
         counts = df_calc.groupby("Team").size().reset_index(name="Matches")
         standings = pd.merge(counts, grouped, on="Team")
 
+        standings["Badge"] = standings["Team"].map(CLUB_BADGES)
         standings["Effective In-Play %"] = ((standings["InPlay_Sec"] / standings["Total_Sec"].replace(0, 1)) * 100).round(1)
         standings["Avg In-Play"] = standings["InPlay_Sec"].apply(seconds_to_time)
         standings["Avg Total Wasted"] = standings["TotalWasted_Sec"].apply(seconds_to_time)
@@ -537,48 +562,72 @@ else:
         standings = standings.sort_values(by=sort_mode[0], ascending=sort_mode[2])
 
         display_cols = [
-            "Team", "Matches", "Effective In-Play %", "Avg In-Play",
+            "Badge", "Team", "Matches", "Effective In-Play %", "Avg In-Play",
             "Avg Total Wasted", "Avg Free Kicks Delay", "Avg Goal Kicks Delay",
             "Avg Throw Ins Delay", "Avg Corners Delay", "Avg Other Delay"
         ]
-        st.dataframe(standings[display_cols], use_container_width=True, hide_index=True)
+        
+        st.dataframe(
+            standings[display_cols],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Badge": st.column_config.ImageColumn("Badge", width="small")
+            }
+        )
 
         st.divider()
 
-        # --- TWITTER CARD GENERATOR ---
+        # --- TWITTER INFOGRAPHIC GENERATOR ---
         st.subheader("Generate Graphic for @EffectiveMins")
-        selected_team = st.selectbox("Select Club for Graphic Card", standings["Team"])
+        
+        col_select, col_type = st.columns([1, 1.5])
+        with col_select:
+            selected_team = st.selectbox("Select Club", standings["Team"])
+        with col_type:
+            chart_type = st.radio(
+                "Select Graphic Type:",
+                ["Dead-Ball Delay Profile (Bar Chart)", "In-Play Trend Across Gameweeks (Line Chart)"],
+                horizontal=True
+            )
+
         t_row = standings[standings["Team"] == selected_team].iloc[0]
+        badge_url = CLUB_BADGES.get(selected_team, "")
 
-        cg1, cg2 = st.columns([1.2, 1])
-        with cg1:
-            fig, ax = plt.subplots(figsize=(10, 5.5), facecolor="#0e1621")
-            ax.set_facecolor("#0e1621")
+        cg1, cg2 = st.columns([1.3, 1])
 
-            categories = ["Free Kicks", "Goal Kicks", "Throw Ins", "Corners", "Other"]
-            durations = [
-                t_row["FreeKicks_Sec"] / 60.0,
-                t_row["GoalKicks_Sec"] / 60.0,
-                t_row["ThrowIns_Sec"] / 60.0,
-                t_row["Corners_Sec"] / 60.0,
-                t_row["Other_Sec"] / 60.0,
-            ]
+        # OPTION 1: DEAD-BALL DELAY PROFILE
+        if chart_type == "Dead-Ball Delay Profile (Bar Chart)":
+            with cg1:
+                fig, ax = plt.subplots(figsize=(10, 5.5), facecolor="#0e1621")
+                ax.set_facecolor("#0e1621")
 
-            ax.barh(categories, durations, color="#00d2ff", edgecolor="#ffffff", height=0.55)
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-            ax.spines['bottom'].set_color('#888888')
-            ax.spines['left'].set_color('#888888')
-            ax.tick_params(colors='#ffffff', labelsize=11)
-            ax.set_xlabel("Average Minutes Spent per Match", color="#ffffff", fontsize=11)
-            ax.set_title(f"{selected_team.upper()} — Dead-Ball Delay Profile", color="#ffffff", fontsize=15, weight="bold", pad=15)
-            fig.text(0.82, 0.02, "@EffectiveMins", color="#888888", fontsize=10, style='italic')
+                categories = ["Free Kicks", "Goal Kicks", "Throw Ins", "Corners", "Other"]
+                durations = [
+                    t_row["FreeKicks_Sec"] / 60.0,
+                    t_row["GoalKicks_Sec"] / 60.0,
+                    t_row["ThrowIns_Sec"] / 60.0,
+                    t_row["Corners_Sec"] / 60.0,
+                    t_row["Other_Sec"] / 60.0,
+                ]
 
-            st.pyplot(fig)
+                ax.barh(categories, durations, color="#00d2ff", edgecolor="#ffffff", height=0.55)
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                ax.spines['bottom'].set_color('#888888')
+                ax.spines['left'].set_color('#888888')
+                ax.tick_params(colors='#ffffff', labelsize=11)
+                ax.set_xlabel("Average Minutes Spent per Match", color="#ffffff", fontsize=11)
+                ax.set_title(f"{selected_team.upper()} — Dead-Ball Delay Profile", color="#ffffff", fontsize=15, weight="bold", pad=15)
+                fig.text(0.82, 0.02, "@EffectiveMins", color="#888888", fontsize=10, style='italic')
 
-        with cg2:
-            st.markdown("### Ready-to-Post Copy")
-            post_text = f"""⏱️ Stoppage Breakdown: {selected_team}
+                st.pyplot(fig)
+
+            with cg2:
+                if badge_url:
+                    st.image(badge_url, width=70)
+                st.markdown("### Ready-to-Post Copy")
+                post_text = f"""⏱️ Stoppage Breakdown: {selected_team}
 
 • Effective Playing Time: {t_row['Effective In-Play %']}% ({t_row['Avg In-Play']})
 • Average Time Lost: {t_row['Avg Total Wasted']} per 90
@@ -589,7 +638,96 @@ Biggest delay factors:
 3. Throw Ins: {t_row['Avg Throw Ins Delay']}
 
 Data tracked by @EffectiveMins #PremierLeague #PL"""
-            st.text_area("Draft Post", value=post_text, height=190)
+                st.text_area("Draft Post", value=post_text, height=200)
+
+        # OPTION 2: GAME-BY-GAME FLUCTUATION LINE CHART
+        else:
+            team_fixtures = st.session_state.match_log[
+                (st.session_state.match_log["Home Team"] == selected_team) |
+                (st.session_state.match_log["Away Team"] == selected_team)
+            ].copy()
+            team_fixtures = team_fixtures.sort_values(by="Gameweek").reset_index(drop=True)
+
+            with cg1:
+                fig, ax = plt.subplots(figsize=(10, 5.5), facecolor="#0e1621")
+                ax.set_facecolor("#0e1621")
+
+                x_labels = []
+                y_vals = []
+                time_strings = []
+
+                for _, match in team_fixtures.iterrows():
+                    is_home = (match["Home Team"] == selected_team)
+                    opp = match["Away Team"] if is_home else match["Home Team"]
+                    venue = "H" if is_home else "A"
+                    x_labels.append(f"GW{match['Gameweek']}\nvs {opp[:3].upper()} ({venue})")
+                    inplay_secs = time_to_seconds(match["Actual In-Play"])
+                    y_vals.append(inplay_secs / 60.0)
+                    time_strings.append(match["Actual In-Play"])
+
+                # Plot line & points
+                ax.plot(range(len(x_labels)), y_vals, color="#00d2ff", linewidth=2.8, marker="o", markersize=9, markerfacecolor="#ffffff", markeredgecolor="#00d2ff", zorder=4)
+
+                # Benchmark line at 60 minutes
+                ax.axhline(60.0, color="#ff495c", linestyle="--", alpha=0.55, linewidth=1.5, label="60-Min Benchmark", zorder=2)
+
+                # Point value labels
+                for idx, (val, t_str) in enumerate(zip(y_vals, time_strings)):
+                    ax.annotate(
+                        t_str,
+                        (idx, val),
+                        textcoords="offset points",
+                        xytext=(0, 11),
+                        ha="center",
+                        color="#ffffff",
+                        fontsize=10,
+                        weight="bold"
+                    )
+
+                ax.set_xticks(range(len(x_labels)))
+                ax.set_xticklabels(x_labels, color="#ffffff", fontsize=10)
+                ax.tick_params(colors="#ffffff", labelsize=10)
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                ax.spines['bottom'].set_color('#888888')
+                ax.spines['left'].set_color('#888888')
+                ax.set_ylabel("In-Play Minutes", color="#ffffff", fontsize=11)
+                ax.set_title(f"{selected_team.upper()} — In-Play Fluctuations by Gameweek", color="#ffffff", fontsize=15, weight="bold", pad=15)
+                ax.grid(color="#ffffff", alpha=0.08, linestyle=":")
+                ax.legend(loc="lower right", facecolor="#151e22", edgecolor="#3a4145", labelcolor="#ffffff")
+                fig.text(0.82, 0.02, "@EffectiveMins", color="#888888", fontsize=10, style='italic')
+
+                # Buffer y limits
+                if y_vals:
+                    ax.set_ylim(min(y_vals) - 4, max(y_vals) + 5)
+
+                st.pyplot(fig)
+
+            with cg2:
+                if badge_url:
+                    st.image(badge_url, width=70)
+                st.markdown("### Ready-to-Post Copy")
+
+                breakdown_lines = []
+                for _, match in team_fixtures.iterrows():
+                    is_home = (match["Home Team"] == selected_team)
+                    opp = match["Away Team"] if is_home else match["Home Team"]
+                    loc = "H" if is_home else "A"
+                    breakdown_lines.append(f"• GW{match['Gameweek']} vs {opp} ({loc}): {match['Actual In-Play']}")
+
+                formatted_breakdown = "\n".join(breakdown_lines)
+
+                trend_post = f"""📈 Effective Playing Time Trend: {selected_team}
+
+Game-by-game breakdown:
+{formatted_breakdown}
+
+• Season Average: {t_row['Avg In-Play']} ({t_row['Effective In-Play %']}% of 90)
+• High: {seconds_to_time(max(time_to_seconds(m['Actual In-Play']) for _, m in team_fixtures.iterrows()))}
+• Low: {seconds_to_time(min(time_to_seconds(m['Actual In-Play']) for _, m in team_fixtures.iterrows()))}
+
+Follow @EffectiveMins for full Premier League stoppage metrics #PL #{selected_team.replace(' ', '')}"""
+                st.text_area("Draft Trend Post", value=trend_post, height=230)
 
     # --- TAB 2: LIVE SPREADSHEET EDITOR ---
     with tab2:
