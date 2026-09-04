@@ -69,7 +69,7 @@ st.title("⏱️ EffectiveMins: Premier League Stoppage Tracker")
 # --- SIDEBAR: CONFIG & CONTROLS ---
 with st.sidebar:
     st.header("⚙️ Configuration")
-    secret_key = st.secrets.get("GROQ_API_KEY", "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")
+    secret_key = st.secrets.get("GROQ_API_KEY", "")
     api_key = st.text_input("Groq API Key (Free)", value=secret_key, type="password")
     st.caption("Obtain a free key at [console.groq.com](https://console.groq.com/)")
     st.divider()
