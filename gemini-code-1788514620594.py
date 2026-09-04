@@ -28,7 +28,6 @@ PL_TEAMS = sorted([
     "Nottingham Forest", "Sunderland", "Tottenham"
 ])
 
-# Club alias mapping for resilient filename and text detection
 CLUB_PATTERNS = [
     ("Nottingham Forest", ["nottingham forest", "nottingham", "nott'm forest", "forest"]),
     ("Manchester United", ["manchester united", "manchester utd", "man utd", "man united"]),
@@ -89,37 +88,25 @@ def seconds_to_time(seconds: int) -> str:
     return f"{m:02d}:{s:02d}"
 
 def clean_html_to_text(html_str: str) -> str:
-    """Robust regex-based HTML text extractor that never stalls on unclosed tags."""
-    # Strip scripts, styles, and head metadata completely
     clean = re.sub(r'<(script|style|head|noscript|svg)[^>]*>.*?</\1>', ' ', html_str, flags=re.DOTALL | re.IGNORECASE)
-    # Convert block elements to linebreaks
     clean = re.sub(r'<(p|div|br|li|tr|h[1-6]|section|article|table)[^>]*>', '\n', clean, flags=re.IGNORECASE)
-    # Strip remaining HTML tags
     clean = re.sub(r'<[^>]+>', ' ', clean)
-    # Decode HTML entities (&nbsp;, &#39;, etc.)
     clean = html.unescape(clean)
-    # Normalise whitespace
     clean = re.sub(r'[ \t]+', ' ', clean)
     clean = re.sub(r'\n\s*\n+', '\n\n', clean)
     return clean
 
 def detect_clubs(filename: str, text: str):
-    """
-    Detects Home and Away teams. 
-    Prioritises the filename order first; falls back to text parsing if missing.
-    """
     fn_lower = filename.lower()
     found_in_fn = []
 
     for canonical, aliases in CLUB_PATTERNS:
         for alias in aliases:
-            # Word boundary matching in filename
             pos = fn_lower.find(alias)
             if pos != -1:
                 found_in_fn.append((pos, canonical))
                 break
 
-    # Deduplicate keeping earliest index per club
     seen = set()
     deduped_fn = []
     for pos, canonical in sorted(found_in_fn):
@@ -130,7 +117,6 @@ def detect_clubs(filename: str, text: str):
     if len(deduped_fn) >= 2:
         return deduped_fn[0][1], deduped_fn[1][1]
 
-    # Fallback to text search directly before 'Actual Play Time'
     header_section = text.split("Actual Play Time")[0] if "Actual Play Time" in text else text
     all_fixtures = list(re.finditer(r"([A-Za-z0-9\s&.-]+?)\s+[Vv]s\s+([A-Za-z0-9\s&.-]+?)(?:\r?\n|<)", header_section))
     if all_fixtures:
@@ -148,34 +134,29 @@ def detect_clubs(filename: str, text: str):
     return "Arsenal", "Aston Villa"
 
 def parse_match_data(filename: str, raw_content: str) -> dict:
-    """Parses all match stoppage stats with zero AI dependencies."""
     text = clean_html_to_text(raw_content) if ("<html" in raw_content.lower() or "<body" in raw_content.lower()) else raw_content
     stats = {}
 
-    # 1. Teams Detection
     home_team, away_team = detect_clubs(filename, text)
     stats["Home Team"] = home_team
     stats["Away Team"] = away_team
 
-    # 2. Gameweek Detection (Filename first, then text)
-    gw_m = re.search(r"(?:Round|GW|Gameweek)\s*(\d+)", filename, re.IGNORECASE)
+    # Robust Gameweek: Look for 'Premier League, Round X' first
+    gw_m = re.search(r"Premier\s+League,?\s+Round\s+(\d+)", text, re.IGNORECASE)
     if not gw_m:
-        gw_m = re.search(r"Round\s+(\d+)", text, re.IGNORECASE)
+        gw_m = re.search(r"(?:Round|GW|Gameweek)\s*(\d+)", filename, re.IGNORECASE)
     stats["Gameweek"] = int(gw_m.group(1)) if gw_m else 1
 
-    # 3. Match Durations
     act_m = re.search(r"Actual\s+(\d{1,2}:\d{2})", text, re.IGNORECASE)
     tot_m = re.search(r"Total\s+(\d{1,2}:\d{2})", text, re.IGNORECASE)
     stats["Actual In-Play"] = act_m.group(1) if act_m else "00:00"
     stats["Total Match Time"] = tot_m.group(1) if tot_m else "90:00"
 
-    # 4. Game Flow Metrics
     stops_m = re.search(r"Game\s*Stops\s*(?:\r?\n|\s+)*(\d+)", text, re.IGNORECASE)
     longest_m = re.search(r"Longest\s*In-Play\s*(?:\r?\n|\s+)*(\d{1,2}:\d{2})", text, re.IGNORECASE)
     stats["Game Stops"] = int(stops_m.group(1)) if stops_m else 0
     stats["Longest In-Play"] = longest_m.group(1) if longest_m else "00:00"
 
-    # 5. Added Time Splits
     ann_m = re.search(r"(\d{1,2}:\d{2})\s*(?:\r?\n|\s+)*Announced", text, re.IGNORECASE)
     act_add_m = re.search(r"(\d{1,2}:\d{2})\s*(?:\r?\n|\s+)*Actual\s+Added", text, re.IGNORECASE)
     stats["Announced Added"] = ann_m.group(1) if ann_m else "00:00"
@@ -187,7 +168,6 @@ def parse_match_data(filename: str, raw_content: str) -> dict:
     if var_m:
         stats["VAR Checks"] = var_m.group(1)
 
-    # 6. Dead-Ball Time Wasted Splits
     wasted_section = text
     if "Time Wasted On" in text:
         wasted_section = text.split("Time Wasted On", 1)[1]
@@ -210,9 +190,11 @@ def parse_match_data(filename: str, raw_content: str) -> dict:
             stats[f"Home {label}"] = "00:00"
             stats[f"Away {label}"] = "00:00"
 
+    # Status check: Did the file contain stoppage metrics?
+    stats["_is_valid"] = not (stats["Actual In-Play"] == "00:00" and stats["Home Total Wasted"] == "00:00")
     return stats
 
-# --- DATABASE INITIALISATION ---
+# --- DATABASE LOAD ---
 if os.path.exists(DATA_FILE):
     try:
         st.session_state.match_log = pd.read_csv(DATA_FILE, encoding="utf-8")
@@ -282,15 +264,17 @@ with st.sidebar:
 
 # --- MATCH INGESTION SECTION ---
 with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.empty):
-    ingest_tab1, ingest_tab2 = st.tabs(["📁 Batch File Upload (.html / .txt)", "✍️ Manual Entry Form"])
+    ingest_tab1, ingest_tab2 = st.tabs(["📁 Batch File Upload (.txt / .html)", "✍️ Manual Entry Form"])
 
-    # TAB 1: BATCH FILE UPLOADER
     with ingest_tab1:
-        st.markdown("Drop one or multiple match reports (**`.html`**, **`.htm`**, or **`.txt`**). **Clubs and Gameweeks are extracted from the file names automatically.**")
+        st.markdown("""
+        Drag and drop your saved match files.
+        > **Firefox Tip:** Save reports using **Save as type: Text Files (*.txt)** so stoppage numbers are included.
+        """)
 
         uploaded_files = st.file_uploader(
             "Select match files",
-            type=["html", "htm", "txt"],
+            type=["txt", "html", "htm"],
             accept_multiple_files=True,
             label_visibility="collapsed",
             key=f"batch_uploader_{st.session_state.uploader_key}"
@@ -307,22 +291,32 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
                     content_str = bytes_data.decode("latin1", errors="ignore")
 
                 parsed = parse_match_data(f.name, content_str)
-                parsed["_filename"] = f.name
+                parsed["Status"] = "Ready" if parsed["_is_valid"] else "⚠️ Missing Stoppage Data"
                 parsed_batch.append(parsed)
 
             df_preview = pd.DataFrame(parsed_batch)
 
             st.write("---")
-            st.markdown(f"##### 🔍 Staged Matches ({len(df_preview)} Found)")
-            st.caption("Review the extracted fixtures below before committing them to the database:")
+            st.markdown(f"##### 🔍 Staged Matches ({len(df_preview)} Detected)")
 
-            preview_cols = ["Gameweek", "Home Team", "Away Team", "Actual In-Play", "Total Match Time", "Home Total Wasted", "Away Total Wasted"]
+            preview_cols = ["Status", "Gameweek", "Home Team", "Away Team", "Actual In-Play", "Total Match Time", "Home Total Wasted", "Away Total Wasted"]
             st.dataframe(df_preview[preview_cols], use_container_width=True, hide_index=True)
+
+            valid_matches = [m for m in parsed_batch if m["_is_valid"]]
+            invalid_count = len(parsed_batch) - len(valid_matches)
+
+            if invalid_count > 0:
+                st.warning(f"{invalid_count} file(s) are blank HTML shells without stats. Only the {len(valid_matches)} valid fixture(s) will be committed.")
 
             st.write("")
             btn_c1, btn_c2 = st.columns([2, 1])
             with btn_c1:
-                save_batch_btn = st.button(f"🚀 Save All {len(df_preview)} Matches to Database", type="primary", use_container_width=True)
+                save_batch_btn = st.button(
+                    f"🚀 Save {len(valid_matches)} Valid Match(es) to Database",
+                    type="primary",
+                    use_container_width=True,
+                    disabled=(len(valid_matches) == 0)
+                )
             with btn_c2:
                 undo_btn = st.button("↩️ Undo Last Logged Entry", type="secondary", use_container_width=True)
 
@@ -337,7 +331,7 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
                     st.info("No records to undo.")
 
             if save_batch_btn:
-                for match in parsed_batch:
+                for match in valid_matches:
                     clean_entry = {col: match.get(col, "00:00") for col in MATCH_COLUMNS}
                     clean_entry["Gameweek"] = int(clean_entry["Gameweek"])
                     clean_entry["Game Stops"] = int(clean_entry["Game Stops"])
@@ -359,7 +353,7 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
 
                 st.session_state.match_log.to_csv(DATA_FILE, index=False, encoding="utf-8")
                 st.session_state.uploader_key += 1
-                st.success(f"Recorded {len(parsed_batch)} matches successfully!")
+                st.success(f"Successfully recorded {len(valid_matches)} fixtures!")
                 st.rerun()
 
     # TAB 2: MANUAL ENTRY FORM
