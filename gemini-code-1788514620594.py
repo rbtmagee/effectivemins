@@ -5,9 +5,23 @@ import json
 import os
 import io
 import base64
+import traceback
 from PIL import Image
 from streamlit_paste_button import paste_image_button
-from groq import Groq
+
+# Conditional imports for engines
+try:
+    from google import genai
+    from google.genai import types
+    HAS_GENAI = True
+except ImportError:
+    HAS_GENAI = False
+
+try:
+    from groq import Groq
+    HAS_GROQ = True
+except ImportError:
+    HAS_GROQ = False
 
 st.set_page_config(page_title="EffectiveMins Tracker", layout="wide")
 
@@ -29,6 +43,37 @@ PL_TEAMS = sorted([
     "Manchester City", "Manchester United", "Newcastle United",
     "Nottingham Forest", "Sunderland", "Tottenham"
 ])
+
+PROMPT_TEXT = """
+Extract the match stoppage statistics from this 365scores graphic into this exact JSON structure:
+{
+    "actual_in_play": "MM:SS",
+    "total_time": "MM:SS",
+    "var_checks": "MM:SS",
+    "game_stops": 0,
+    "longest_in_play": "MM:SS",
+    "announced_added": "MM:SS",
+    "actual_added": "MM:SS",
+    "played_added": "MM:SS",
+    "home_goal_kicks": "MM:SS",
+    "away_goal_kicks": "MM:SS",
+    "home_free_kicks": "MM:SS",
+    "away_free_kicks": "MM:SS",
+    "home_throw_ins": "MM:SS",
+    "away_throw_ins": "MM:SS",
+    "home_corners": "MM:SS",
+    "away_corners": "MM:SS",
+    "home_other": "MM:SS",
+    "away_other": "MM:SS",
+    "home_total_wasted": "MM:SS",
+    "away_total_wasted": "MM:SS"
+}
+Rules:
+- In 'Time Wasted On', left column is Home side, right column is Away side.
+- 'game_stops' must be an integer.
+- Format all durations as 'MM:SS' strings.
+- Return pure JSON only. Do not include markdown ticks, intros, or explanations.
+"""
 
 # --- HELPER TIME CONVERSIONS ---
 def clean_val(val) -> str:
@@ -76,14 +121,21 @@ else:
 
 st.title("⏱️ EffectiveMins: Premier League Stoppage Tracker")
 
-# --- SIDEBAR: CONFIG & CONTROLS ---
+# --- SIDEBAR: ENGINE & KEY CONFIG ---
 with st.sidebar:
     st.header("⚙️ Configuration")
-    secret_key = st.secrets.get("GROQ_API_KEY", "")
-    api_key = st.text_input("Groq API Key (Free)", value=secret_key, type="password")
-    st.caption("Obtain a free key at [console.groq.com](https://console.groq.com/)")
-    st.divider()
+    ai_engine = st.radio("Choose AI Engine:", ["Google Gemini (1,500/day free)", "Groq Llama Vision"], index=0)
 
+    if ai_engine == "Google Gemini (1,500/day free)":
+        default_gemini = st.secrets.get("GEMINI_API_KEY", "")
+        api_key = st.text_input("Gemini API Key", value=default_gemini, type="password")
+        st.caption("Using model: **`gemini-2.0-flash`** (1,500 free queries/day)")
+    else:
+        default_groq = st.secrets.get("GROQ_API_KEY", "")
+        api_key = st.text_input("Groq API Key (Free)", value=default_groq, type="password")
+        st.caption("Obtain key at [console.groq.com](https://console.groq.com/)")
+
+    st.divider()
     st.header("🛠️ Database Admin")
     st.write(f"Logged Fixtures: `{len(st.session_state.match_log)}`")
     
@@ -151,17 +203,17 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
             st.info("No entries to undo.")
 
     if extract_pressed:
-        clean_api_key = api_key.strip() if api_key else ""
-        if not clean_api_key:
-            st.error("Please enter your free Groq API key in the left sidebar.")
+        clean_key = api_key.strip() if api_key else ""
+        if not clean_key:
+            st.error("Please provide an API Key in the left sidebar.")
         elif home_team == away_team:
             st.error("Home and Away teams must be different.")
         elif active_image_bytes is None:
-            st.error("Please paste or upload a new 365Scores graphic first.")
+            st.error("Please paste or upload a 365Scores graphic first.")
         else:
-            with st.spinner("Extracting stats via Groq Vision..."):
+            with st.spinner("Extracting match metrics..."):
                 try:
-                    # Normalise and compress image to avoid payload/encoding issues
+                    # Normalise and compress image to clean JPEG
                     pil_img = Image.open(io.BytesIO(active_image_bytes))
                     if pil_img.mode in ("RGBA", "P"):
                         pil_img = pil_img.convert("RGB")
@@ -169,55 +221,41 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
                     
                     img_buf = io.BytesIO()
                     pil_img.save(img_buf, format="JPEG", quality=85)
-                    base64_image = base64.b64encode(img_buf.getvalue()).decode("ascii")
+                    jpeg_bytes = img_buf.getvalue()
 
-                    client = Groq(api_key=clean_api_key)
+                    raw_json_text = ""
 
-                    prompt = """
-                    Extract the match stoppage statistics from this 365scores graphic into this exact JSON structure:
-                    {
-                        "actual_in_play": "MM:SS",
-                        "total_time": "MM:SS",
-                        "var_checks": "MM:SS",
-                        "game_stops": 0,
-                        "longest_in_play": "MM:SS",
-                        "announced_added": "MM:SS",
-                        "actual_added": "MM:SS",
-                        "played_added": "MM:SS",
-                        "home_goal_kicks": "MM:SS",
-                        "away_goal_kicks": "MM:SS",
-                        "home_free_kicks": "MM:SS",
-                        "away_free_kicks": "MM:SS",
-                        "home_throw_ins": "MM:SS",
-                        "away_throw_ins": "MM:SS",
-                        "home_corners": "MM:SS",
-                        "away_corners": "MM:SS",
-                        "home_other": "MM:SS",
-                        "away_other": "MM:SS",
-                        "home_total_wasted": "MM:SS",
-                        "away_total_wasted": "MM:SS"
-                    }
-                    Rules:
-                    - In 'Time Wasted On', left column is Home side, right column is Away side.
-                    - 'game_stops' is an integer.
-                    - Format all durations as 'MM:SS' strings.
-                    - Return pure JSON only. Do not include markdown ticks, intros, or explanations.
-                    """
+                    if ai_engine == "Google Gemini (1,500/day free)":
+                        client = genai.Client(api_key=clean_key)
+                        response = client.models.generate_content(
+                            model="gemini-2.0-flash",
+                            contents=[
+                                types.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg"),
+                                PROMPT_TEXT
+                            ],
+                            config=types.GenerateContentConfig(
+                                response_mime_type="application/json"
+                            )
+                        )
+                        raw_json_text = response.text
+                    else:
+                        client = Groq(api_key=clean_key)
+                        b64_str = base64.b64encode(jpeg_bytes).decode("ascii")
+                        completion = client.chat.completions.create(
+                            model="llama-3.2-11b-vision-preview",
+                            messages=[{
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": PROMPT_TEXT},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_str}"}}
+                                ]
+                            }],
+                            temperature=0.1,
+                            response_format={"type": "json_object"}
+                        )
+                        raw_json_text = completion.choices[0].message.content
 
-                    completion = client.chat.completions.create(
-                        model="llama-3.2-11b-vision-preview",
-                        messages=[{
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                            ]
-                        }],
-                        temperature=0.1,
-                        response_format={"type": "json_object"}
-                    )
-
-                    stats = json.loads(completion.choices[0].message.content)
+                    stats = json.loads(raw_json_text)
 
                     new_entry = {
                         "Gameweek": int(gw),
@@ -253,8 +291,10 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
                     st.success(f"Recorded {home_team} vs {away_team} (Gameweek {gw}) successfully!")
                     st.rerun()
 
-                except Exception as e:
-                    st.error(f"Error parsing graphic: {str(e)}")
+                except Exception as err:
+                    st.error(f"Error parsing graphic: {str(err)}")
+                    with st.expander("Show Diagnostic Details"):
+                        st.code(traceback.format_exc())
 
 st.divider()
 
