@@ -31,12 +31,19 @@ PL_TEAMS = sorted([
 ])
 
 # --- HELPER TIME CONVERSIONS ---
+def clean_val(val) -> str:
+    """Sanitises unicode characters like dashes into standard ascii equivalents."""
+    if val is None:
+        return "--"
+    return str(val).replace("–", "-").replace("—", "-").strip()
+
 def time_to_seconds(val: str) -> int:
-    """Converts MM:SS or M:SS to integer seconds."""
-    if not val or ":" not in str(val):
+    """Converts MM:SS or M:SS to integer seconds safely."""
+    s_val = clean_val(val)
+    if not s_val or ":" not in s_val or s_val.startswith("-"):
         return 0
     try:
-        parts = str(val).strip().split(":")
+        parts = s_val.split(":")
         return int(parts[0]) * 60 + int(parts[1])
     except (ValueError, IndexError):
         return 0
@@ -60,7 +67,10 @@ MATCH_COLUMNS = [
 ]
 
 if os.path.exists(DATA_FILE):
-    st.session_state.match_log = pd.read_csv(DATA_FILE)
+    try:
+        st.session_state.match_log = pd.read_csv(DATA_FILE, encoding="utf-8")
+    except Exception:
+        st.session_state.match_log = pd.read_csv(DATA_FILE, encoding="latin1")
 else:
     st.session_state.match_log = pd.DataFrame(columns=MATCH_COLUMNS)
 
@@ -134,24 +144,34 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
         if not st.session_state.match_log.empty:
             removed_row = st.session_state.match_log.iloc[-1]
             st.session_state.match_log = st.session_state.match_log.iloc[:-1].reset_index(drop=True)
-            st.session_state.match_log.to_csv(DATA_FILE, index=False)
+            st.session_state.match_log.to_csv(DATA_FILE, index=False, encoding="utf-8")
             st.warning(f"Undid: **{removed_row['Home Team']} vs {removed_row['Away Team']}** (Gameweek {removed_row['Gameweek']})")
             st.rerun()
         else:
             st.info("No entries to undo.")
 
     if extract_pressed:
-        if not api_key:
+        clean_api_key = api_key.strip() if api_key else ""
+        if not clean_api_key:
             st.error("Please enter your free Groq API key in the left sidebar.")
         elif home_team == away_team:
             st.error("Home and Away teams must be different.")
         elif active_image_bytes is None:
             st.error("Please paste or upload a new 365Scores graphic first.")
         else:
-            with st.spinner("Extracting stats via Groq Free Vision..."):
+            with st.spinner("Extracting stats via Groq Vision..."):
                 try:
-                    client = Groq(api_key=api_key)
-                    base64_image = base64.b64encode(active_image_bytes).decode('utf-8')
+                    # Normalise and compress image to avoid payload/encoding issues
+                    pil_img = Image.open(io.BytesIO(active_image_bytes))
+                    if pil_img.mode in ("RGBA", "P"):
+                        pil_img = pil_img.convert("RGB")
+                    pil_img.thumbnail((1200, 1200))
+                    
+                    img_buf = io.BytesIO()
+                    pil_img.save(img_buf, format="JPEG", quality=85)
+                    base64_image = base64.b64encode(img_buf.getvalue()).decode("ascii")
+
+                    client = Groq(api_key=clean_api_key)
 
                     prompt = """
                     Extract the match stoppage statistics from this 365scores graphic into this exact JSON structure:
@@ -190,7 +210,7 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
                             "role": "user",
                             "content": [
                                 {"type": "text", "text": prompt},
-                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
+                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
                             ]
                         }],
                         temperature=0.1,
@@ -201,35 +221,35 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
 
                     new_entry = {
                         "Gameweek": int(gw),
-                        "Home Team": home_team,
-                        "Away Team": away_team,
-                        "Actual In-Play": stats.get("actual_in_play", "00:00"),
-                        "Total Match Time": stats.get("total_time", "90:00"),
-                        "VAR Checks": stats.get("var_checks", "00:00"),
+                        "Home Team": str(home_team),
+                        "Away Team": str(away_team),
+                        "Actual In-Play": clean_val(stats.get("actual_in_play", "00:00")),
+                        "Total Match Time": clean_val(stats.get("total_time", "90:00")),
+                        "VAR Checks": clean_val(stats.get("var_checks", "00:00")),
                         "Game Stops": int(stats.get("game_stops", 0)),
-                        "Longest In-Play": stats.get("longest_in_play", "00:00"),
-                        "Announced Added": stats.get("announced_added", "00:00"),
-                        "Actual Added": stats.get("actual_added", "00:00"),
-                        "Played Added": stats.get("played_added", "00:00"),
-                        "Home Goal Kicks": stats.get("home_goal_kicks", "00:00"),
-                        "Away Goal Kicks": stats.get("away_goal_kicks", "00:00"),
-                        "Home Free Kicks": stats.get("home_free_kicks", "00:00"),
-                        "Away Free Kicks": stats.get("away_free_kicks", "00:00"),
-                        "Home Throw Ins": stats.get("home_throw_ins", "00:00"),
-                        "Away Throw Ins": stats.get("away_throw_ins", "00:00"),
-                        "Home Corners": stats.get("home_corners", "00:00"),
-                        "Away Corners": stats.get("away_corners", "00:00"),
-                        "Home Other": stats.get("home_other", "00:00"),
-                        "Away Other": stats.get("away_other", "00:00"),
-                        "Home Total Wasted": stats.get("home_total_wasted", "00:00"),
-                        "Away Total Wasted": stats.get("away_total_wasted", "00:00")
+                        "Longest In-Play": clean_val(stats.get("longest_in_play", "00:00")),
+                        "Announced Added": clean_val(stats.get("announced_added", "00:00")),
+                        "Actual Added": clean_val(stats.get("actual_added", "00:00")),
+                        "Played Added": clean_val(stats.get("played_added", "00:00")),
+                        "Home Goal Kicks": clean_val(stats.get("home_goal_kicks", "00:00")),
+                        "Away Goal Kicks": clean_val(stats.get("away_goal_kicks", "00:00")),
+                        "Home Free Kicks": clean_val(stats.get("home_free_kicks", "00:00")),
+                        "Away Free Kicks": clean_val(stats.get("away_free_kicks", "00:00")),
+                        "Home Throw Ins": clean_val(stats.get("home_throw_ins", "00:00")),
+                        "Away Throw Ins": clean_val(stats.get("away_throw_ins", "00:00")),
+                        "Home Corners": clean_val(stats.get("home_corners", "00:00")),
+                        "Away Corners": clean_val(stats.get("away_corners", "00:00")),
+                        "Home Other": clean_val(stats.get("home_other", "00:00")),
+                        "Away Other": clean_val(stats.get("away_other", "00:00")),
+                        "Home Total Wasted": clean_val(stats.get("home_total_wasted", "00:00")),
+                        "Away Total Wasted": clean_val(stats.get("away_total_wasted", "00:00"))
                     }
 
                     st.session_state.match_log = pd.concat(
                         [st.session_state.match_log, pd.DataFrame([new_entry])],
                         ignore_index=True
                     )
-                    st.session_state.match_log.to_csv(DATA_FILE, index=False)
+                    st.session_state.match_log.to_csv(DATA_FILE, index=False, encoding="utf-8")
                     st.success(f"Recorded {home_team} vs {away_team} (Gameweek {gw}) successfully!")
                     st.rerun()
 
@@ -367,10 +387,10 @@ Data tracked by @EffectiveMins #PremierLeague #PL"""
 
         if not edited_df.equals(st.session_state.match_log):
             st.session_state.match_log = edited_df.reset_index(drop=True)
-            st.session_state.match_log.to_csv(DATA_FILE, index=False)
+            st.session_state.match_log.to_csv(DATA_FILE, index=False, encoding="utf-8")
             st.success("Changes saved to database!")
             st.rerun()
 
         st.write("")
-        csv_export = st.session_state.match_log.to_csv(index=False).encode('utf-8')
+        csv_export = st.session_state.match_log.to_csv(index=False, encoding="utf-8").encode('utf-8')
         st.download_button("📥 Download Full CSV Database", data=csv_export, file_name="effective_mins_database.csv", mime="text/csv")
