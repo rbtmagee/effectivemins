@@ -7,10 +7,11 @@ import io
 import re
 import base64
 import traceback
+import requests
 from PIL import Image
 from streamlit_paste_button import paste_image_button
 
-# Dynamic imports
+# Dynamic AI provider imports
 try:
     from google import genai
     from google.genai import types
@@ -73,10 +74,10 @@ Rules:
 - In 'Time Wasted On', left column is Home team, right column is Away team.
 - 'game_stops' must be an integer.
 - Format all durations as 'MM:SS' strings.
-- Return valid JSON only without markdown or explanations.
+- Return valid JSON only without markdown ticks or commentary.
 """
 
-# --- UTILITIES ---
+# --- UTILITY & SANITISATION FUNCTIONS ---
 def sanitize_text(val) -> str:
     if val is None:
         return "--"
@@ -98,6 +99,30 @@ def seconds_to_time(seconds: int) -> str:
     m, s = divmod(int(round(seconds)), 60)
     return f"{m:02d}:{s:02d}"
 
+@st.cache_data(ttl=1800)
+def fetch_live_openrouter_free_models():
+    """Dynamically fetches models currently online and free on OpenRouter."""
+    try:
+        res = requests.get("https://openrouter.ai/api/v1/models", timeout=8)
+        if res.status_code == 200:
+            data = res.json().get("data", [])
+            # Filter for free models supporting multimodal/vision
+            free_models = [
+                m["id"] for m in data 
+                if ":free" in m.get("id", "") and any(term in m.get("id", "").lower() for term in ["vl", "vision", "flash", "gemini"])
+            ]
+            if free_models:
+                return free_models
+    except Exception:
+        pass
+    # Reliable fallback list if OpenRouter API discovery is slow
+    return [
+        "google/gemini-2.0-flash-exp:free",
+        "meta-llama/llama-3.2-11b-vision-instruct:free",
+        "google/gemini-2.0-pro-exp-02-05:free"
+    ]
+
+# --- LOAD DATABASE ---
 MATCH_COLUMNS = [
     "Gameweek", "Home Team", "Away Team",
     "Actual In-Play", "Total Match Time", "VAR Checks", "Game Stops", "Longest In-Play",
@@ -122,44 +147,32 @@ st.title("⏱️ EffectiveMins: Premier League Stoppage Tracker")
 
 # --- SIDEBAR CONFIGURATION ---
 with st.sidebar:
-    st.header("⚙️ AI Configuration")
+    st.header("⚙️ Scanner Configuration")
     provider = st.selectbox(
-        "Choose AI Provider",
-        ["Google AI Studio", "OpenRouter (Free Vision)", "Custom Model Name"]
+        "AI Provider",
+        ["OpenRouter (Free Vision)", "Google AI Studio"]
     )
 
-    if provider == "Google AI Studio":
-        api_key = st.text_input("Google API Key", value=st.secrets.get("GEMINI_API_KEY", ""), type="password")
-        model_name = st.text_input("Model ID", value="gemini-3.6-flash")
-    elif provider == "OpenRouter (Free Vision)":
-        api_key = st.text_input("OpenRouter API Key (Free)", value=st.secrets.get("OPENROUTER_API_KEY", ""), type="password")
-        model_name = st.selectbox(
-            "Free Vision Model",
-            [
-                "qwen/qwen-2.5-vl-72b-instruct:free",
-                "meta-llama/llama-3.2-11b-vision-instruct:free"
-            ]
-        )
-        st.caption("Get free key at [openrouter.ai](https://openrouter.ai/keys)")
+    if provider == "OpenRouter (Free Vision)":
+        api_key = st.text_input("OpenRouter Key", value=st.secrets.get("OPENROUTER_API_KEY", ""), type="password")
+        st.caption("Obtain key at [openrouter.ai/keys](https://openrouter.ai/keys)")
+        
+        live_free_models = fetch_live_openrouter_free_models()
+        selected_model = st.selectbox("Active Free Vision Models", live_free_models)
+        st.caption("Only models currently online appear above.")
+        
     else:
-        api_key = st.text_input("API Key", type="password")
-        model_name = st.text_input("Custom Model Name")
-
-    with st.expander("🔍 Test Available Models on Your Key"):
-        if st.button("Check Active Models"):
-            clean_k = api_key.strip()
-            if not clean_k:
-                st.warning("Enter your key first.")
-            elif provider == "Google AI Studio" and HAS_GOOGLE:
+        api_key = st.text_input("Google API Key", value=st.secrets.get("GEMINI_API_KEY", ""), type="password")
+        selected_model = st.text_input("Model ID", value="gemini-3.6-flash")
+        if st.button("Check Active Google Models"):
+            if api_key and HAS_GOOGLE:
                 try:
-                    c = genai.Client(api_key=clean_k)
-                    models = [m.name for m in c.models.list()]
-                    st.write("**Active Google Models:**")
-                    st.write(models[:12])
+                    c = genai.Client(api_key=api_key.strip())
+                    g_models = [m.name.replace("models/", "") for m in c.models.list() if "generateContent" in m.supported_actions]
+                    st.write("Active models for your key:")
+                    st.code("\n".join(g_models[:8]))
                 except Exception as e:
-                    st.error(f"Error checking models: {str(e)}")
-            else:
-                st.info("Direct model check supported for Google AI Studio.")
+                    st.error(str(e))
 
     st.divider()
     st.header("🛠️ Database Admin")
@@ -176,8 +189,8 @@ with st.sidebar:
     st.divider()
     st.markdown("**@EffectiveMins** Analytics Engine")
 
-# --- MATCH INGESTION ---
-with st.expander("📸 Log New Match", expanded=True):
+# --- FIXTURE INGESTION SECTION ---
+with st.expander("➕ Log New Fixture", expanded=True):
     gw_col, h_col, a_col = st.columns(3)
     with gw_col:
         gw = st.number_input("Gameweek", min_value=1, max_value=38, value=1, step=1)
@@ -186,9 +199,9 @@ with st.expander("📸 Log New Match", expanded=True):
     with a_col:
         away_team = st.selectbox("Away Team", PL_TEAMS, index=1)
 
-    ingest_tab1, ingest_tab2 = st.tabs(["⚡ AI Graphic Scanner", "✍️ 30-Second Manual Entry"])
+    ingest_tab1, ingest_tab2 = st.tabs(["⚡ AI Graphic Scanner", "✍️ 30-Second Manual Fallback"])
 
-    # TAB 1: SCREENSHOT / CLIPBOARD
+    # TAB 1: AI SCANNER
     with ingest_tab1:
         st.markdown("### Image Input")
         upload_method = st.radio("Input Mode:", ["📋 Paste Screenshot", "📁 Upload Image File"], horizontal=True)
@@ -196,7 +209,7 @@ with st.expander("📸 Log New Match", expanded=True):
         active_image_bytes = None
         if upload_method == "📋 Paste Screenshot":
             paste_result = paste_image_button(
-                label="📋 Click to Paste from Clipboard",
+                label="📋 Click to Paste Screenshot",
                 text_color="#ffffff",
                 background_color="#007acc",
                 hover_background_color="#005999",
@@ -206,7 +219,7 @@ with st.expander("📸 Log New Match", expanded=True):
                 buf = io.BytesIO()
                 paste_result.image_data.save(buf, format="PNG")
                 active_image_bytes = buf.getvalue()
-                st.image(paste_result.image_data, caption="Graphic Loaded", width=320)
+                st.image(paste_result.image_data, caption="Screenshot Loaded", width=320)
         else:
             uploaded_img = st.file_uploader("Upload 365Scores Graphic", type=["png", "jpg", "jpeg", "webp"])
             if uploaded_img is not None:
@@ -216,7 +229,7 @@ with st.expander("📸 Log New Match", expanded=True):
         st.write("")
         btn1, btn2 = st.columns([2, 1])
         with btn1:
-            extract_pressed = st.button("🚀 Extract & Save Match", type="primary", use_container_width=True)
+            extract_pressed = st.button("🚀 Extract & Save Match Record", type="primary", use_container_width=True)
         with btn2:
             undo_pressed = st.button("↩️ Undo Last Entry", type="secondary", use_container_width=True)
 
@@ -231,13 +244,13 @@ with st.expander("📸 Log New Match", expanded=True):
         if extract_pressed:
             clean_key = api_key.strip() if api_key else ""
             if not clean_key:
-                st.error("Please supply your API key in the sidebar.")
+                st.error("Please enter your API key in the left sidebar.")
             elif home_team == away_team:
                 st.error("Home and Away teams cannot be identical.")
             elif active_image_bytes is None:
-                st.error("Please paste or upload a graphic first.")
+                st.error("Please paste or upload a 365Scores graphic first.")
             else:
-                with st.spinner(f"Extracting with {model_name}..."):
+                with st.spinner(f"Extracting with {selected_model}..."):
                     try:
                         pil_img = Image.open(io.BytesIO(active_image_bytes))
                         if pil_img.mode in ("RGBA", "P"):
@@ -252,7 +265,7 @@ with st.expander("📸 Log New Match", expanded=True):
                         if provider == "Google AI Studio":
                             c = genai.Client(api_key=clean_key)
                             resp = c.models.generate_content(
-                                model=model_name.strip(),
+                                model=selected_model.strip(),
                                 contents=[
                                     types.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg"),
                                     PROMPT_TEXT
@@ -261,13 +274,18 @@ with st.expander("📸 Log New Match", expanded=True):
                             )
                             raw_json = resp.text
                         else:
-                            # OpenRouter / OpenAI compatible client
-                            base_url = "https://openrouter.ai/api/v1" if provider == "OpenRouter (Free Vision)" else None
-                            client_or = OpenAI(api_key=clean_key, base_url=base_url)
+                            client_or = OpenAI(
+                                api_key=clean_key,
+                                base_url="https://openrouter.ai/api/v1",
+                                default_headers={
+                                    "HTTP-Referer": "https://effectivemins.streamlit.app",
+                                    "X-Title": "EffectiveMins"
+                                }
+                            )
                             b64 = base64.b64encode(jpeg_bytes).decode("ascii")
 
                             completion = client_or.chat.completions.create(
-                                model=model_name.strip(),
+                                model=selected_model.strip(),
                                 messages=[{
                                     "role": "user",
                                     "content": [
@@ -317,58 +335,95 @@ with st.expander("📸 Log New Match", expanded=True):
 
                     except Exception as err:
                         st.error(f"Extraction error: {str(err)}")
-                        with st.expander("Diagnostic Details"):
+                        with st.expander("Diagnostic Traceback"):
                             st.code(traceback.format_exc())
 
-    # TAB 2: BULLETPROOF MANUAL ENTRY
+    # TAB 2: MANUAL ENTRY FORM
     with ingest_tab2:
-        with st.form("quick_manual_form"):
-            c_m1, c_m2, c_m3 = st.columns(3)
-            with c_m1:
-                m_inplay = st.text_input("Actual In-Play", placeholder="57:29")
-                m_total = st.text_input("Total Match Time", placeholder="99:01")
-            with c_m2:
-                m_hgk = st.text_input("Home Goal Kicks", placeholder="01:13")
-                m_agk = st.text_input("Away Goal Kicks", placeholder="05:45")
-            with c_m3:
-                m_htot = st.text_input("Home Total Wasted", placeholder="12:05")
-                m_atot = st.text_input("Away Total Wasted", placeholder="28:43")
+        with st.form("complete_manual_form"):
+            st.markdown("##### Match In-Play & Stoppages")
+            f1, f2, f3, f4, f5 = st.columns(5)
+            with f1:
+                man_inplay = st.text_input("Actual In-Play", placeholder="57:29")
+            with f2:
+                man_total = st.text_input("Total Match Time", placeholder="99:01")
+            with f3:
+                man_var = st.text_input("VAR Checks", placeholder="02:30")
+            with f4:
+                man_stops = st.number_input("Game Stops", min_value=0, step=1, value=0)
+            with f5:
+                man_longest = st.text_input("Longest In-Play", placeholder="03:50")
 
-            m_submit = st.form_submit_button("Save Match Manually")
-            if m_submit:
-                m_entry = {
+            st.markdown("##### Added Time Breakdown")
+            at1, at2, at3 = st.columns(3)
+            with at1:
+                man_ann = st.text_input("Announced Added", placeholder="08:00")
+            with at2:
+                man_act_add = st.text_input("Actual Added", placeholder="09:01")
+            with at3:
+                man_ply_add = st.text_input("Played Added", placeholder="06:33")
+
+            st.markdown("##### Dead-Ball Time Wasted (Home vs Away)")
+            tw1, tw2, tw3, tw4, tw5, tw6 = st.columns(6)
+            with tw1:
+                st.caption("Goal Kicks")
+                man_hgk = st.text_input("Home GK", placeholder="01:13")
+                man_agk = st.text_input("Away GK", placeholder="05:45")
+            with tw2:
+                st.caption("Free Kicks")
+                man_hfk = st.text_input("Home FK", placeholder="04:06")
+                man_afk = st.text_input("Away FK", placeholder="10:32")
+            with tw3:
+                st.caption("Throw Ins")
+                man_hti = st.text_input("Home TI", placeholder="02:49")
+                man_ati = st.text_input("Away TI", placeholder="06:06")
+            with tw4:
+                st.caption("Corners")
+                man_hco = st.text_input("Home Cor", placeholder="01:24")
+                man_aco = st.text_input("Away Cor", placeholder="02:50")
+            with tw5:
+                st.caption("Other")
+                man_hot = st.text_input("Home Oth", placeholder="02:33")
+                man_aot = st.text_input("Away Oth", placeholder="03:30")
+            with tw6:
+                st.caption("Total Wasted")
+                man_htot = st.text_input("Home Tot", placeholder="12:05")
+                man_atot = st.text_input("Away Tot", placeholder="28:43")
+
+            if st.form_submit_button("Save Match Record Manually", type="primary"):
+                manual_row = {
                     "Gameweek": int(gw),
                     "Home Team": sanitize_text(home_team),
                     "Away Team": sanitize_text(away_team),
-                    "Actual In-Play": sanitize_text(m_inplay or "00:00"),
-                    "Total Match Time": sanitize_text(m_total or "90:00"),
-                    "VAR Checks": "00:00",
-                    "Game Stops": 0,
-                    "Longest In-Play": "00:00",
-                    "Announced Added": "00:00",
-                    "Actual Added": "00:00",
-                    "Played Added": "00:00",
-                    "Home Goal Kicks": sanitize_text(m_hgk or "00:00"),
-                    "Away Goal Kicks": sanitize_text(m_agk or "00:00"),
-                    "Home Free Kicks": "00:00",
-                    "Away Free Kicks": "00:00",
-                    "Home Throw Ins": "00:00",
-                    "Away Throw Ins": "00:00",
-                    "Home Corners": "00:00",
-                    "Away Corners": "00:00",
-                    "Home Other": "00:00",
-                    "Away Other": "00:00",
-                    "Home Total Wasted": sanitize_text(m_htot or "00:00"),
-                    "Away Total Wasted": sanitize_text(m_atot or "00:00")
+                    "Actual In-Play": sanitize_text(man_inplay or "00:00"),
+                    "Total Match Time": sanitize_text(man_total or "90:00"),
+                    "VAR Checks": sanitize_text(man_var or "00:00"),
+                    "Game Stops": int(man_stops),
+                    "Longest In-Play": sanitize_text(man_longest or "00:00"),
+                    "Announced Added": sanitize_text(man_ann or "00:00"),
+                    "Actual Added": sanitize_text(man_act_add or "00:00"),
+                    "Played Added": sanitize_text(man_ply_add or "00:00"),
+                    "Home Goal Kicks": sanitize_text(man_hgk or "00:00"),
+                    "Away Goal Kicks": sanitize_text(man_agk or "00:00"),
+                    "Home Free Kicks": sanitize_text(man_hfk or "00:00"),
+                    "Away Free Kicks": sanitize_text(man_afk or "00:00"),
+                    "Home Throw Ins": sanitize_text(man_hti or "00:00"),
+                    "Away Throw Ins": sanitize_text(man_ati or "00:00"),
+                    "Home Corners": sanitize_text(man_hco or "00:00"),
+                    "Away Corners": sanitize_text(man_aco or "00:00"),
+                    "Home Other": sanitize_text(man_hot or "00:00"),
+                    "Away Other": sanitize_text(man_aot or "00:00"),
+                    "Home Total Wasted": sanitize_text(man_htot or "00:00"),
+                    "Away Total Wasted": sanitize_text(man_atot or "00:00")
                 }
-                st.session_state.match_log = pd.concat([st.session_state.match_log, pd.DataFrame([m_entry])], ignore_index=True)
+                st.session_state.match_log = pd.concat([st.session_state.match_log, pd.DataFrame([manual_row])], ignore_index=True)
                 st.session_state.match_log.to_csv(DATA_FILE, index=False, encoding="utf-8")
-                st.success("Manual entry saved!")
+                st.success(f"Recorded {home_team} vs {away_team} manually!")
                 st.rerun()
 
 st.divider()
 
-# --- STANDINGS TABLE & VISUALS ---
+# --- STANDINGS TABLE & TWITTER GRAPHIC ---
 if st.session_state.match_log.empty:
     st.info("No fixtures recorded yet. Add a match above to populate the league table.")
 else:
@@ -438,7 +493,7 @@ else:
 
         st.divider()
 
-        # TWITTER CARD GENERATOR
+        # TWITTER GRAPHIC
         st.subheader("Generate Graphic for @EffectiveMins")
         selected_team = st.selectbox("Select Club for Graphic Card", standings["Team"])
         t_row = standings[standings["Team"] == selected_team].iloc[0]
