@@ -3,7 +3,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import json
 import os
-from PIL import Image
 from google import genai
 from google.genai import types
 
@@ -19,15 +18,15 @@ st.markdown("""
 
 DATA_FILE = "effective_mins_data.csv"
 
-PL_TEAMS = [
+PL_TEAMS = sorted([
     "Arsenal", "Aston Villa", "Bournemouth", "Brentford", "Brighton",
     "Chelsea", "Crystal Palace", "Everton", "Fulham", "Ipswich Town",
-    "Leicester City", "Liverpool", "Manchester City", "Manchester United",
-    "Newcastle United", "Nottingham Forest", "Southampton", "Tottenham",
-    "West Ham", "Wolves"
-]
+    "Leeds United", "Leicester City", "Liverpool", "Manchester City",
+    "Manchester United", "Newcastle United", "Nottingham Forest",
+    "Southampton", "Tottenham", "West Ham", "Wolves"
+])
 
-# --- HELPER TIME FUNCTIONS ---
+# --- HELPER TIME CONVERSIONS ---
 def time_to_seconds(val: str) -> int:
     """Converts MM:SS or M:SS to integer seconds."""
     if not val or ":" not in str(val):
@@ -43,7 +42,7 @@ def seconds_to_time(seconds: int) -> str:
     m, s = divmod(int(round(seconds)), 60)
     return f"{m:02d}:{s:02d}"
 
-# --- LOAD DATABASE ---
+# --- INITIALISE OR LOAD DATABASE ---
 MATCH_COLUMNS = [
     "Gameweek", "Home Team", "Away Team",
     "Actual In-Play", "Total Match Time", "VAR Checks", "Game Stops", "Longest In-Play",
@@ -63,45 +62,44 @@ else:
 
 st.title("⏱️ EffectiveMins: Premier League Stoppage Tracker")
 
-# --- SIDEBAR: API KEY & QUICK CONFIG ---
+# --- SIDEBAR: CONFIG & API KEY ---
 with st.sidebar:
-    st.header("⚙️ Settings")
+    st.header("⚙️ Configuration")
     secret_key = st.secrets.get("GEMINI_API_KEY", "")
     api_key = st.text_input("Gemini API Key", value=secret_key, type="password")
-    st.caption("Free key available at [Google AI Studio](https://aistudio.google.com/)")
+    st.caption("Obtain a free key at [Google AI Studio](https://aistudio.google.com/)")
     st.divider()
-    st.caption("Account: **@EffectiveMins**")
+    st.markdown("**@EffectiveMins** Stoppage Analytics")
 
-# --- HYBRID ENTRY: MANUAL HEADER + VISION SCRAPER ---
-with st.expander("📸 Scan New Match Screenshot", expanded=True):
+# --- HYBRID INGESTION (DROPDOWNS + SCREENSHOT) ---
+with st.expander("📸 Scan New Match Breakdown", expanded=True):
     col1, col2, col3 = st.columns(3)
     with col1:
         gw = st.number_input("Gameweek", min_value=1, max_value=38, value=1, step=1)
     with col2:
         home_team = st.selectbox("Home Team", PL_TEAMS, index=0)
     with col3:
-        # Default Away team to a different team than Home
+        # Default away team to the second item in the list
         away_team = st.selectbox("Away Team", PL_TEAMS, index=1)
 
-    uploaded_img = st.file_uploader("Upload 365Scores Stoppage Screenshot", type=["png", "jpg", "jpeg", "webp"])
+    uploaded_img = st.file_uploader("Upload 365Scores Stoppage Graphic", type=["png", "jpg", "jpeg", "webp"])
 
     if st.button("🚀 Extract & Save Match Record", type="primary"):
         if not api_key:
-            st.error("Please provide a Gemini API Key in the sidebar.")
+            st.error("Please provide a Gemini API key in the sidebar.")
         elif home_team == away_team:
-            st.error("Home Team and Away Team cannot be identical.")
+            st.error("Home and Away teams must be different.")
         elif uploaded_img is None:
             st.error("Please upload a 365Scores screenshot first.")
         else:
-            with st.spinner("AI is scanning 365Scores stoppage stats..."):
+            with st.spinner("Scanning 365Scores stoppage metrics..."):
                 try:
                     client = genai.Client(api_key=api_key)
                     image_bytes = uploaded_img.getvalue()
                     mime_type = uploaded_img.type or "image/png"
 
                     prompt = """
-                    You are extracting match stoppage statistics from a 365scores graphic.
-                    Extract every single metric into this exact JSON schema:
+                    Extract the match stoppage statistics from this 365scores graphic into this JSON structure:
                     {
                         "actual_in_play": "MM:SS",
                         "total_time": "MM:SS",
@@ -124,10 +122,10 @@ with st.expander("📸 Scan New Match Screenshot", expanded=True):
                         "home_total_wasted": "MM:SS",
                         "away_total_wasted": "MM:SS"
                     }
-                    Note:
-                    - In the 'Time Wasted On' list, the left column of numbers is the Home team, and the right column is the Away team.
-                    - Game stops is an integer number.
-                    - All times must be formatted as MM:SS (e.g. '05:45', '01:13', '57:29').
+                    Important notes:
+                    - In the 'Time Wasted On' section, the left column corresponds to the Home side, and the right column corresponds to the Away side.
+                    - 'game_stops' must be an integer.
+                    - Format all time durations as 'MM:SS' strings (e.g., '01:13', '05:45', '57:29').
                     """
 
                     response = client.models.generate_content(
@@ -169,31 +167,30 @@ with st.expander("📸 Scan New Match Screenshot", expanded=True):
                         "Away Total Wasted": stats.get("away_total_wasted", "00:00")
                     }
 
-                    # Append and save locally
                     st.session_state.match_log = pd.concat(
                         [st.session_state.match_log, pd.DataFrame([new_entry])],
                         ignore_index=True
                     )
                     st.session_state.match_log.to_csv(DATA_FILE, index=False)
-                    st.success(f"Successfully recorded **{home_team} vs {away_team}** (Gameweek {gw})!")
+                    st.success(f"Recorded {home_team} vs {away_team} (Gameweek {gw}) successfully!")
                     st.rerun()
 
                 except Exception as e:
-                    st.error(f"Error processing screenshot: {str(e)}")
+                    st.error(f"Error parsing screenshot: {str(e)}")
 
 st.divider()
 
-# --- STANDINGS & VISUALISATION ---
+# --- STANDINGS & VISUAL ANALYTICS ---
 if st.session_state.match_log.empty:
-    st.info("No matches logged yet. Upload your first 365Scores screenshot above.")
+    st.info("No fixture data recorded yet. Upload your first 365Scores graphic above.")
 else:
-    tab1, tab2 = st.tabs(["🏆 Team Standings (Averages)", "📋 Match Log & Export"])
+    tab1, tab2 = st.tabs(["🏆 Team Standings (Averages)", "📋 Full Database & Export"])
 
     with tab1:
-        # Build team breakdown
-        rows = []
+        team_rows = []
         for _, r in st.session_state.match_log.iterrows():
-            rows.append({
+            # Home side entry
+            team_rows.append({
                 "Team": r["Home Team"],
                 "InPlay_Sec": time_to_seconds(r["Actual In-Play"]),
                 "Total_Sec": time_to_seconds(r["Total Match Time"]),
@@ -204,7 +201,8 @@ else:
                 "Other_Sec": time_to_seconds(r["Home Other"]),
                 "TotalWasted_Sec": time_to_seconds(r["Home Total Wasted"])
             })
-            rows.append({
+            # Away side entry
+            team_rows.append({
                 "Team": r["Away Team"],
                 "InPlay_Sec": time_to_seconds(r["Actual In-Play"]),
                 "Total_Sec": time_to_seconds(r["Total Match Time"]),
@@ -216,7 +214,7 @@ else:
                 "TotalWasted_Sec": time_to_seconds(r["Away Total Wasted"])
             })
 
-        df_calc = pd.DataFrame(rows)
+        df_calc = pd.DataFrame(team_rows)
         grouped = df_calc.groupby("Team").mean().reset_index()
         counts = df_calc.groupby("Team").size().reset_index(name="Matches")
         standings = pd.merge(counts, grouped, on="Team")
