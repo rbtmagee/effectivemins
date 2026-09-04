@@ -1,7 +1,11 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import json
 import os
+from PIL import Image
+from google import genai
+from google.genai import types
 
 st.set_page_config(page_title="EffectiveMins Tracker", layout="wide")
 
@@ -15,9 +19,17 @@ st.markdown("""
 
 DATA_FILE = "effective_mins_data.csv"
 
-# --- HELPER FUNCTIONS FOR TIME CONVERSION ---
+PL_TEAMS = [
+    "Arsenal", "Aston Villa", "Bournemouth", "Brentford", "Brighton",
+    "Chelsea", "Crystal Palace", "Everton", "Fulham", "Ipswich Town",
+    "Leicester City", "Liverpool", "Manchester City", "Manchester United",
+    "Newcastle United", "Nottingham Forest", "Southampton", "Tottenham",
+    "West Ham", "Wolves"
+]
+
+# --- HELPER TIME FUNCTIONS ---
 def time_to_seconds(val: str) -> int:
-    """Converts MM:SS or M:SS string to integer seconds."""
+    """Converts MM:SS or M:SS to integer seconds."""
     if not val or ":" not in str(val):
         return 0
     try:
@@ -27,13 +39,13 @@ def time_to_seconds(val: str) -> int:
         return 0
 
 def seconds_to_time(seconds: int) -> str:
-    """Converts integer seconds back into MM:SS format."""
+    """Converts seconds back to MM:SS."""
     m, s = divmod(int(round(seconds)), 60)
     return f"{m:02d}:{s:02d}"
 
-# --- INITIALISE OR LOAD DATABASE ---
+# --- LOAD DATABASE ---
 MATCH_COLUMNS = [
-    "Gameweek", "Home Team", "Away Team", 
+    "Gameweek", "Home Team", "Away Team",
     "Actual In-Play", "Total Match Time", "VAR Checks", "Game Stops", "Longest In-Play",
     "Announced Added", "Actual Added", "Played Added",
     "Home Goal Kicks", "Away Goal Kicks",
@@ -45,200 +57,208 @@ MATCH_COLUMNS = [
 ]
 
 if os.path.exists(DATA_FILE):
-    raw_df = pd.read_csv(DATA_FILE)
-    st.session_state.match_log = raw_df
+    st.session_state.match_log = pd.read_csv(DATA_FILE)
 else:
     st.session_state.match_log = pd.DataFrame(columns=MATCH_COLUMNS)
 
 st.title("⏱️ EffectiveMins: Premier League Stoppage Tracker")
 
-# --- DATA ENTRY FORM (ALL 365SCORES FIELDS) ---
-with st.expander("➕ Log New Match from 365Scores", expanded=st.session_state.match_log.empty):
-    with st.form("manual_entry_form", clear_on_submit=True):
-        st.subheader("1. Match Details")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            gameweek = st.number_input("Gameweek", min_value=1, max_value=38, step=1, value=1)
-        with c2:
-            home_team = st.text_input("Home Team (e.g. Arsenal)")
-        with c3:
-            away_team = st.text_input("Away Team (e.g. Wolves)")
+# --- SIDEBAR: API KEY & QUICK CONFIG ---
+with st.sidebar:
+    st.header("⚙️ Settings")
+    secret_key = st.secrets.get("GEMINI_API_KEY", "")
+    api_key = st.text_input("Gemini API Key", value=secret_key, type="password")
+    st.caption("Free key available at [Google AI Studio](https://aistudio.google.com/)")
+    st.divider()
+    st.caption("Account: **@EffectiveMins**")
 
-        st.subheader("2. Overall Match In-Play & Stoppages")
-        m1, m2, m3, m4, m5 = st.columns(5)
-        with m1:
-            actual_in_play = st.text_input("Actual In-Play (MM:SS)", placeholder="57:29")
-        with m2:
-            total_time = st.text_input("Total Match Time (MM:SS)", placeholder="99:01")
-        with m3:
-            var_checks = st.text_input("Significant VAR Checks", placeholder="02:30")
-        with m4:
-            game_stops = st.number_input("Game Stops (Count)", min_value=0, step=1, value=0)
-        with m5:
-            longest_in_play = st.text_input("Longest In-Play", placeholder="03:50")
+# --- HYBRID ENTRY: MANUAL HEADER + VISION SCRAPER ---
+with st.expander("📸 Scan New Match Screenshot", expanded=True):
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        gw = st.number_input("Gameweek", min_value=1, max_value=38, value=1, step=1)
+    with col2:
+        home_team = st.selectbox("Home Team", PL_TEAMS, index=0)
+    with col3:
+        # Default Away team to a different team than Home
+        away_team = st.selectbox("Away Team", PL_TEAMS, index=1)
 
-        st.subheader("3. Added Time Breakdown")
-        a1, a2, a3 = st.columns(3)
-        with a1:
-            announced_added = st.text_input("Announced (MM:SS)", placeholder="08:00")
-        with a2:
-            actual_added = st.text_input("Actual Added (MM:SS)", placeholder="09:01")
-        with a3:
-            played_added = st.text_input("Played (MM:SS)", placeholder="06:33")
+    uploaded_img = st.file_uploader("Upload 365Scores Stoppage Screenshot", type=["png", "jpg", "jpeg", "webp"])
 
-        st.subheader("4. Time Wasted Breakdown (Home vs Away)")
-        st.caption("Enter the exact splits shown on the 365scores graphic")
-        
-        tw1, tw2, tw3, tw4, tw5, tw6 = st.columns(6)
-        with tw1:
-            st.markdown("**Goal Kicks**")
-            h_gk = st.text_input("Home GK", placeholder="01:13")
-            a_gk = st.text_input("Away GK", placeholder="05:45")
-        with tw2:
-            st.markdown("**Free Kicks**")
-            h_fk = st.text_input("Home FK", placeholder="04:06")
-            a_fk = st.text_input("Away FK", placeholder="10:32")
-        with tw3:
-            st.markdown("**Throw Ins**")
-            h_ti = st.text_input("Home TI", placeholder="02:49")
-            a_ti = st.text_input("Away TI", placeholder="06:06")
-        with tw4:
-            st.markdown("**Corners**")
-            h_co = st.text_input("Home Corner", placeholder="01:24")
-            a_co = st.text_input("Away Corner", placeholder="02:50")
-        with tw5:
-            st.markdown("**Other**")
-            h_ot = st.text_input("Home Other", placeholder="02:33")
-            a_ot = st.text_input("Away Other", placeholder="03:30")
-        with tw6:
-            st.markdown("**Total Wasted**")
-            h_tot = st.text_input("Home Total", placeholder="12:05")
-            a_tot = st.text_input("Away Total", placeholder="28:43")
+    if st.button("🚀 Extract & Save Match Record", type="primary"):
+        if not api_key:
+            st.error("Please provide a Gemini API Key in the sidebar.")
+        elif home_team == away_team:
+            st.error("Home Team and Away Team cannot be identical.")
+        elif uploaded_img is None:
+            st.error("Please upload a 365Scores screenshot first.")
+        else:
+            with st.spinner("AI is scanning 365Scores stoppage stats..."):
+                try:
+                    client = genai.Client(api_key=api_key)
+                    image_bytes = uploaded_img.getvalue()
+                    mime_type = uploaded_img.type or "image/png"
 
-        submitted = st.form_submit_button("Save Match Record")
+                    prompt = """
+                    You are extracting match stoppage statistics from a 365scores graphic.
+                    Extract every single metric into this exact JSON schema:
+                    {
+                        "actual_in_play": "MM:SS",
+                        "total_time": "MM:SS",
+                        "var_checks": "MM:SS",
+                        "game_stops": 0,
+                        "longest_in_play": "MM:SS",
+                        "announced_added": "MM:SS",
+                        "actual_added": "MM:SS",
+                        "played_added": "MM:SS",
+                        "home_goal_kicks": "MM:SS",
+                        "away_goal_kicks": "MM:SS",
+                        "home_free_kicks": "MM:SS",
+                        "away_free_kicks": "MM:SS",
+                        "home_throw_ins": "MM:SS",
+                        "away_throw_ins": "MM:SS",
+                        "home_corners": "MM:SS",
+                        "away_corners": "MM:SS",
+                        "home_other": "MM:SS",
+                        "away_other": "MM:SS",
+                        "home_total_wasted": "MM:SS",
+                        "away_total_wasted": "MM:SS"
+                    }
+                    Note:
+                    - In the 'Time Wasted On' list, the left column of numbers is the Home team, and the right column is the Away team.
+                    - Game stops is an integer number.
+                    - All times must be formatted as MM:SS (e.g. '05:45', '01:13', '57:29').
+                    """
 
-        if submitted:
-            if not home_team or not away_team:
-                st.error("Please provide both Home and Away team names.")
-            else:
-                new_row = {
-                    "Gameweek": int(gameweek),
-                    "Home Team": home_team.strip(),
-                    "Away Team": away_team.strip(),
-                    "Actual In-Play": actual_in_play,
-                    "Total Match Time": total_time,
-                    "VAR Checks": var_checks,
-                    "Game Stops": int(game_stops),
-                    "Longest In-Play": longest_in_play,
-                    "Announced Added": announced_added,
-                    "Actual Added": actual_added,
-                    "Played Added": played_added,
-                    "Home Goal Kicks": h_gk,
-                    "Away Goal Kicks": a_gk,
-                    "Home Free Kicks": h_fk,
-                    "Away Free Kicks": a_fk,
-                    "Home Throw Ins": h_ti,
-                    "Away Throw Ins": a_ti,
-                    "Home Corners": h_co,
-                    "Away Corners": a_co,
-                    "Home Other": h_ot,
-                    "Away Other": a_ot,
-                    "Home Total Wasted": h_tot,
-                    "Away Total Wasted": a_tot
-                }
-                st.session_state.match_log = pd.concat(
-                    [st.session_state.match_log, pd.DataFrame([new_row])], 
-                    ignore_index=True
-                )
-                st.session_state.match_log.to_csv(DATA_FILE, index=False)
-                st.success(f"Saved {home_team} vs {away_team} successfully!")
-                st.rerun()
+                    response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=[
+                            types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                            prompt
+                        ],
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json"
+                        )
+                    )
+
+                    stats = json.loads(response.text)
+
+                    new_entry = {
+                        "Gameweek": int(gw),
+                        "Home Team": home_team,
+                        "Away Team": away_team,
+                        "Actual In-Play": stats.get("actual_in_play", "00:00"),
+                        "Total Match Time": stats.get("total_time", "90:00"),
+                        "VAR Checks": stats.get("var_checks", "00:00"),
+                        "Game Stops": int(stats.get("game_stops", 0)),
+                        "Longest In-Play": stats.get("longest_in_play", "00:00"),
+                        "Announced Added": stats.get("announced_added", "00:00"),
+                        "Actual Added": stats.get("actual_added", "00:00"),
+                        "Played Added": stats.get("played_added", "00:00"),
+                        "Home Goal Kicks": stats.get("home_goal_kicks", "00:00"),
+                        "Away Goal Kicks": stats.get("away_goal_kicks", "00:00"),
+                        "Home Free Kicks": stats.get("home_free_kicks", "00:00"),
+                        "Away Free Kicks": stats.get("away_free_kicks", "00:00"),
+                        "Home Throw Ins": stats.get("home_throw_ins", "00:00"),
+                        "Away Throw Ins": stats.get("away_throw_ins", "00:00"),
+                        "Home Corners": stats.get("home_corners", "00:00"),
+                        "Away Corners": stats.get("away_corners", "00:00"),
+                        "Home Other": stats.get("home_other", "00:00"),
+                        "Away Other": stats.get("away_other", "00:00"),
+                        "Home Total Wasted": stats.get("home_total_wasted", "00:00"),
+                        "Away Total Wasted": stats.get("away_total_wasted", "00:00")
+                    }
+
+                    # Append and save locally
+                    st.session_state.match_log = pd.concat(
+                        [st.session_state.match_log, pd.DataFrame([new_entry])],
+                        ignore_index=True
+                    )
+                    st.session_state.match_log.to_csv(DATA_FILE, index=False)
+                    st.success(f"Successfully recorded **{home_team} vs {away_team}** (Gameweek {gw})!")
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"Error processing screenshot: {str(e)}")
 
 st.divider()
 
-# --- DISPLAY OPTIONS: LEAGUE TABLE VS MATCH LOG ---
+# --- STANDINGS & VISUALISATION ---
 if st.session_state.match_log.empty:
-    st.info("No match data logged yet. Use the form above to add your first match.")
+    st.info("No matches logged yet. Upload your first 365Scores screenshot above.")
 else:
-    tab_standings, tab_matches = st.tabs(["🏆 Team Standings (Averages)", "📋 Raw Match Log"])
+    tab1, tab2 = st.tabs(["🏆 Team Standings (Averages)", "📋 Match Log & Export"])
 
-    # --- TAB 1: TEAM STANDINGS ---
-    with tab_standings:
-        # Build individual team rows
-        records = []
+    with tab1:
+        # Build team breakdown
+        rows = []
         for _, r in st.session_state.match_log.iterrows():
-            # Home Entry
-            records.append({
+            rows.append({
                 "Team": r["Home Team"],
-                "Actual In-Play Sec": time_to_seconds(r["Actual In-Play"]),
-                "Total Match Sec": time_to_seconds(r["Total Match Time"]),
-                "Goal Kicks Sec": time_to_seconds(r["Home Goal Kicks"]),
-                "Free Kicks Sec": time_to_seconds(r["Home Free Kicks"]),
-                "Throw Ins Sec": time_to_seconds(r["Home Throw Ins"]),
-                "Corners Sec": time_to_seconds(r["Home Corners"]),
-                "Other Sec": time_to_seconds(r["Home Other"]),
-                "Total Wasted Sec": time_to_seconds(r["Home Total Wasted"])
+                "InPlay_Sec": time_to_seconds(r["Actual In-Play"]),
+                "Total_Sec": time_to_seconds(r["Total Match Time"]),
+                "GoalKicks_Sec": time_to_seconds(r["Home Goal Kicks"]),
+                "FreeKicks_Sec": time_to_seconds(r["Home Free Kicks"]),
+                "ThrowIns_Sec": time_to_seconds(r["Home Throw Ins"]),
+                "Corners_Sec": time_to_seconds(r["Home Corners"]),
+                "Other_Sec": time_to_seconds(r["Home Other"]),
+                "TotalWasted_Sec": time_to_seconds(r["Home Total Wasted"])
             })
-            # Away Entry
-            records.append({
+            rows.append({
                 "Team": r["Away Team"],
-                "Actual In-Play Sec": time_to_seconds(r["Actual In-Play"]),
-                "Total Match Sec": time_to_seconds(r["Total Match Time"]),
-                "Goal Kicks Sec": time_to_seconds(r["Away Goal Kicks"]),
-                "Free Kicks Sec": time_to_seconds(r["Away Free Kicks"]),
-                "Throw Ins Sec": time_to_seconds(r["Away Throw Ins"]),
-                "Corners Sec": time_to_seconds(r["Away Corners"]),
-                "Other Sec": time_to_seconds(r["Away Other"]),
-                "Total Wasted Sec": time_to_seconds(r["Away Total Wasted"])
+                "InPlay_Sec": time_to_seconds(r["Actual In-Play"]),
+                "Total_Sec": time_to_seconds(r["Total Match Time"]),
+                "GoalKicks_Sec": time_to_seconds(r["Away Goal Kicks"]),
+                "FreeKicks_Sec": time_to_seconds(r["Away Free Kicks"]),
+                "ThrowIns_Sec": time_to_seconds(r["Away Throw Ins"]),
+                "Corners_Sec": time_to_seconds(r["Away Corners"]),
+                "Other_Sec": time_to_seconds(r["Away Other"]),
+                "TotalWasted_Sec": time_to_seconds(r["Away Total Wasted"])
             })
 
-        df_calc = pd.DataFrame(records)
+        df_calc = pd.DataFrame(rows)
         grouped = df_calc.groupby("Team").mean().reset_index()
         counts = df_calc.groupby("Team").size().reset_index(name="Matches")
-        team_table = pd.merge(counts, grouped, on="Team")
+        standings = pd.merge(counts, grouped, on="Team")
 
-        # Derive readable figures
-        team_table["Effective In-Play %"] = (
-            (team_table["Actual In-Play Sec"] / team_table["Total Match Sec"].replace(0, 1)) * 100
-        ).round(1)
-        team_table["Avg In-Play"] = team_table["Actual In-Play Sec"].apply(seconds_to_time)
-        team_table["Avg Goal Kicks Delay"] = team_table["Goal Kicks Sec"].apply(seconds_to_time)
-        team_table["Avg Free Kicks Delay"] = team_table["Free Kicks Sec"].apply(seconds_to_time)
-        team_table["Avg Throw Ins Delay"] = team_table["Throw Ins Sec"].apply(seconds_to_time)
-        team_table["Avg Corners Delay"] = team_table["Corners Sec"].apply(seconds_to_time)
-        team_table["Avg Other Delay"] = team_table["Other Sec"].apply(seconds_to_time)
-        team_table["Avg Total Wasted"] = team_table["Total Wasted Sec"].apply(seconds_to_time)
+        standings["Effective In-Play %"] = ((standings["InPlay_Sec"] / standings["Total_Sec"].replace(0, 1)) * 100).round(1)
+        standings["Avg In-Play"] = standings["InPlay_Sec"].apply(seconds_to_time)
+        standings["Avg Total Wasted"] = standings["TotalWasted_Sec"].apply(seconds_to_time)
+        standings["Avg Free Kicks Delay"] = standings["FreeKicks_Sec"].apply(seconds_to_time)
+        standings["Avg Goal Kicks Delay"] = standings["GoalKicks_Sec"].apply(seconds_to_time)
+        standings["Avg Throw Ins Delay"] = standings["ThrowIns_Sec"].apply(seconds_to_time)
+        standings["Avg Corners Delay"] = standings["Corners_Sec"].apply(seconds_to_time)
+        standings["Avg Other Delay"] = standings["Other_Sec"].apply(seconds_to_time)
 
-        # Sorting selection
-        sort_choice = st.selectbox(
-            "Sort Table By:",
+        # Dynamic Sorting
+        sort_mode = st.selectbox(
+            "Sort Standings By:",
             [
-                ("Total Wasted Sec", "Avg Total Wasted (Highest First)", False),
-                ("Goal Kicks Sec", "Goal Kicks Delay (Highest First)", False),
-                ("Free Kicks Sec", "Free Kicks Delay (Highest First)", False),
-                ("Throw Ins Sec", "Throw Ins Delay (Highest First)", False),
-                ("Corners Sec", "Corners Delay (Highest First)", False),
-                ("Effective In-Play %", "Effective In-Play % (Lowest First)", True),
+                ("TotalWasted_Sec", "Total Delay (Highest First)", False),
+                ("GoalKicks_Sec", "Goal Kicks Delay (Highest First)", False),
+                ("FreeKicks_Sec", "Free Kicks Delay (Highest First)", False),
+                ("ThrowIns_Sec", "Throw Ins Delay (Highest First)", False),
+                ("Corners_Sec", "Corners Delay (Highest First)", False),
+                ("Effective In-Play %", "Effective In-Play % (Lowest First)", True)
             ],
             format_func=lambda x: x[1]
         )
 
-        team_table = team_table.sort_values(by=sort_choice[0], ascending=sort_choice[2])
+        standings = standings.sort_values(by=sort_mode[0], ascending=sort_mode[2])
 
-        # Clean display table
-        display_columns = [
+        display_cols = [
             "Team", "Matches", "Effective In-Play %", "Avg In-Play",
-            "Avg Total Wasted", "Avg Free Kicks Delay", "Avg Goal Kicks Delay", 
+            "Avg Total Wasted", "Avg Free Kicks Delay", "Avg Goal Kicks Delay",
             "Avg Throw Ins Delay", "Avg Corners Delay", "Avg Other Delay"
         ]
-        st.dataframe(team_table[display_columns], use_container_width=True, hide_index=True)
+        st.dataframe(standings[display_cols], use_container_width=True, hide_index=True)
 
         st.divider()
 
-        # --- TWITTER GRAPHIC GENERATOR ---
-        st.subheader("Generate X Card (@EffectiveMins)")
-        selected_team = st.selectbox("Select Team for Graphic", team_table["Team"])
-        t_row = team_table[team_table["Team"] == selected_team].iloc[0]
+        # --- TWITTER INFOGRAPHIC CARD GENERATOR ---
+        st.subheader("Generate Graphic for @EffectiveMins")
+        selected_team = st.selectbox("Select Club for Graphic Card", standings["Team"])
+        t_row = standings[standings["Team"] == selected_team].iloc[0]
 
         cg1, cg2 = st.columns([1.2, 1])
         with cg1:
@@ -247,28 +267,28 @@ else:
 
             categories = ["Free Kicks", "Goal Kicks", "Throw Ins", "Corners", "Other"]
             durations = [
-                t_row["Free Kicks Sec"] / 60.0,
-                t_row["Goal Kicks Sec"] / 60.0,
-                t_row["Throw Ins Sec"] / 60.0,
-                t_row["Corners Sec"] / 60.0,
-                t_row["Other Sec"] / 60.0,
+                t_row["FreeKicks_Sec"] / 60.0,
+                t_row["GoalKicks_Sec"] / 60.0,
+                t_row["ThrowIns_Sec"] / 60.0,
+                t_row["Corners_Sec"] / 60.0,
+                t_row["Other_Sec"] / 60.0,
             ]
 
-            bars = ax.barh(categories, durations, color="#00d2ff", edgecolor="#ffffff", height=0.55)
+            ax.barh(categories, durations, color="#00d2ff", edgecolor="#ffffff", height=0.55)
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
             ax.spines['bottom'].set_color('#888888')
             ax.spines['left'].set_color('#888888')
             ax.tick_params(colors='#ffffff', labelsize=11)
-            ax.set_xlabel("Average Minutes Lost per Match", color="#ffffff", fontsize=11)
-            ax.set_title(f"{selected_team.upper()} — Dead-Ball Delay Breakdown", color="#ffffff", fontsize=15, weight="bold", pad=15)
+            ax.set_xlabel("Average Minutes Spent per Match", color="#ffffff", fontsize=11)
+            ax.set_title(f"{selected_team.upper()} — Dead-Ball Delay Profile", color="#ffffff", fontsize=15, weight="bold", pad=15)
             fig.text(0.82, 0.02, "@EffectiveMins", color="#888888", fontsize=10, style='italic')
 
             st.pyplot(fig)
 
         with cg2:
             st.markdown("### Ready-to-Post Copy")
-            tweet_text = f"""⏱️ Stoppage Breakdown: {selected_team}
+            post_text = f"""⏱️ Stoppage Breakdown: {selected_team}
 
 • Effective Playing Time: {t_row['Effective In-Play %']}% ({t_row['Avg In-Play']})
 • Average Time Lost: {t_row['Avg Total Wasted']} per 90
@@ -279,17 +299,9 @@ Biggest delay factors:
 3. Throw Ins: {t_row['Avg Throw Ins Delay']}
 
 Data tracked by @EffectiveMins #PremierLeague #PL"""
-            st.text_area("Draft Post", value=tweet_text, height=200)
+            st.text_area("Draft Post", value=post_text, height=190)
 
-    # --- TAB 2: RAW MATCH LOG ---
-    with tab_matches:
+    with tab2:
         st.dataframe(st.session_state.match_log, use_container_width=True)
-        
-        # Download button to back up CSV
-        csv_bytes = st.session_state.match_log.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="Download Match Log (CSV)",
-            data=csv_bytes,
-            file_name="effective_mins_export.csv",
-            mime="text/csv"
-        )
+        csv_export = st.session_state.match_log.to_csv(index=False).encode('utf-8')
+        st.download_button("Download Full CSV Database", data=csv_export, file_name="effective_mins_database.csv", mime="text/csv")
