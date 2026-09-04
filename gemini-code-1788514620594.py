@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import os
 import io
 import re
+from html.parser import HTMLParser
 
 st.set_page_config(page_title="EffectiveMins Tracker", layout="wide")
 
@@ -45,6 +46,38 @@ if "uploader_id" not in st.session_state:
 if "paste_id" not in st.session_state:
     st.session_state.paste_id = 0
 
+# --- BUILT-IN HTML TO TEXT STRIPPER ---
+class HTMLTextExtractor(HTMLParser):
+    """Strips HTML tags and converts block elements to clean structured text."""
+    def __init__(self):
+        super().__init__()
+        self.text_parts = []
+        self.skip_tag = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() in ["script", "style", "head", "noscript"]:
+            self.skip_tag = True
+        elif tag.lower() in ["p", "div", "br", "li", "tr", "td", "section", "article", "h1", "h2", "h3"]:
+            self.text_parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag.lower() in ["script", "style", "head", "noscript"]:
+            self.skip_tag = False
+        elif tag.lower() in ["p", "div", "li", "tr", "section", "article"]:
+            self.text_parts.append("\n")
+
+    def handle_data(self, data):
+        if not self.skip_tag:
+            self.text_parts.append(data)
+
+    def get_text(self) -> str:
+        return "".join(self.text_parts)
+
+def extract_text_from_html(html_str: str) -> str:
+    parser = HTMLTextExtractor()
+    parser.feed(html_str)
+    return parser.get_text()
+
 # --- UTILITY HELPERS ---
 def clean_val(val) -> str:
     if pd.isna(val) or val is None:
@@ -67,7 +100,6 @@ def seconds_to_time(seconds: int) -> str:
     return f"{m:02d}:{s:02d}"
 
 def match_club_name(raw_name: str) -> str:
-    """Matches raw text names like 'Fulham FC' or 'Chelsea FC' to our PL club list."""
     if not raw_name:
         return ""
     cleaned = raw_name.lower().strip()
@@ -92,10 +124,9 @@ def match_club_name(raw_name: str) -> str:
 def parse_365_raw_text(content: str) -> dict:
     stats = {}
 
-    # Slice content strictly before "Actual Play Time" to avoid top-bar navigation menus
     header_section = content.split("Actual Play Time")[0] if "Actual Play Time" in content else content
 
-    # 1. Automatic Fixture Detection
+    # 1. Automatic Fixture Detection (last match header before stats)
     all_fixtures = list(re.finditer(r"([A-Za-z0-9\s&.-]+?)\s+[Vv]s\s+([A-Za-z0-9\s&.-]+?)(?:\r?\n|<)", header_section))
     if all_fixtures:
         last_fixture = all_fixtures[-1]
@@ -232,30 +263,40 @@ with st.sidebar:
 
 # --- MATCH INGESTION SECTION ---
 with st.expander("➕ Log New Fixture", expanded=st.session_state.match_log.empty):
-    ingest_tab1, ingest_tab2 = st.tabs(["📄 Automatic .txt Parser", "✍️ Manual Entry Form"])
+    ingest_tab1, ingest_tab2 = st.tabs(["📄 Automatic File Parser (.html / .txt)", "✍️ Manual Entry Form"])
 
-    # TAB 1: FULL AUTO TEXT PARSER
+    # TAB 1: FILE / TEXT PARSER
     with ingest_tab1:
-        st.markdown("Upload the saved `.txt` file or paste text copied from the expanded 365Scores page.")
+        st.markdown("Upload your saved match page directly (**`.html`**, **`.htm`**, or **`.txt`**). **Teams and Gameweek are detected automatically.**")
 
-        input_mode = st.radio("Input Format:", ["📁 Upload .txt File", "📋 Paste Copied Text"], horizontal=True)
+        input_mode = st.radio("Input Format:", ["📁 Upload HTML or TXT File", "📋 Paste Copied Text"], horizontal=True)
 
         raw_report_text = ""
-        if input_mode == "📁 Upload .txt File":
-            uploaded_txt = st.file_uploader(
-                "Upload Match Report File",
-                type=["txt"],
+        if input_mode == "📁 Upload HTML or TXT File":
+            uploaded_file = st.file_uploader(
+                "Upload Match File",
+                type=["html", "htm", "txt"],
                 label_visibility="collapsed",
-                key=f"txt_uploader_{st.session_state.uploader_id}"  # Dynamic key resets on save
+                key=f"file_uploader_{st.session_state.uploader_id}"
             )
-            if uploaded_txt is not None:
-                raw_report_text = uploaded_txt.read().decode("utf-8", errors="ignore")
+            if uploaded_file is not None:
+                file_bytes = uploaded_file.read()
+                try:
+                    file_str = file_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    file_str = file_bytes.decode("latin1", errors="ignore")
+
+                # If HTML, strip tags automatically to plain text
+                if uploaded_file.name.lower().endswith((".html", ".htm")):
+                    raw_report_text = extract_text_from_html(file_str)
+                else:
+                    raw_report_text = file_str
         else:
             raw_report_text = st.text_area(
                 "Paste Report Text Here:",
                 placeholder="Fulham Vs Chelsea\nEngland, Premier League, Round 1\nActual 60:58\nTotal 96:20\n...",
                 height=160,
-                key=f"txt_paste_{st.session_state.paste_id}"  # Dynamic key resets on save
+                key=f"txt_paste_{st.session_state.paste_id}"
             )
 
         if raw_report_text.strip():
@@ -299,7 +340,7 @@ with st.expander("➕ Log New Fixture", expanded=st.session_state.match_log.empt
                 if confirmed_home == confirmed_away:
                     st.error("Home and Away clubs must be different.")
                 elif parsed_data["actual_in_play"] == "00:00" and parsed_data["home_total_wasted"] == "00:00":
-                    st.error("Could not find stoppage metrics. Verify that 'See More' was expanded prior to copying.")
+                    st.error("Could not find stoppage metrics. Make sure 'See More' was clicked on 365Scores before saving.")
                 else:
                     new_entry = {
                         "Gameweek": int(confirmed_gw),
