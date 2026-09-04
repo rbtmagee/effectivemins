@@ -28,7 +28,7 @@ PL_TEAMS = sorted([
     "Nottingham Forest", "Sunderland", "Tottenham"
 ])
 
-# Official Premier League CDN Badge IDs
+# Official Premier League CDN Badges
 CLUB_BADGES = {
     "Arsenal": "https://resources.premierleague.com/premierleague/badges/t3.png",
     "Aston Villa": "https://resources.premierleague.com/premierleague/badges/t7.png",
@@ -170,7 +170,6 @@ def parse_match_data(filename: str, raw_content: str) -> dict:
         gw_m = re.search(r"(?:Round|GW|Gameweek)\s*(\d+)", filename, re.IGNORECASE)
     stats["Gameweek"] = int(gw_m.group(1)) if gw_m else 1
 
-    # Isolate Actual Play Time block
     play_section = text
     if "Actual Play Time" in text:
         play_section = text.split("Actual Play Time", 1)[1]
@@ -200,12 +199,8 @@ def parse_match_data(filename: str, raw_content: str) -> dict:
     if var_m:
         stats["VAR Checks"] = var_m.group(1)
 
-    # Isolate Time Wasted section
     wasted_match = re.search(r"Time\s+Wasted(?:\s+On)?", text, re.IGNORECASE)
-    if wasted_match:
-        wasted_section = text[wasted_match.end():]
-    else:
-        wasted_section = text
+    wasted_section = text[wasted_match.end():] if wasted_match else text
 
     categories = [
         ("Goal Kicks", r"Goal\s+Kicks"),
@@ -349,7 +344,7 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
             st.write("---")
             st.markdown(f"##### 🔍 Staged Matches ({len(df_preview)} Detected)")
 
-            preview_cols = ["Status", "Gameweek", "Home Team", "Away Team", "Actual In-Play", "Total Match Time", "VAR Checks", "Home Total Wasted", "Away Total Wasted"]
+            preview_cols = ["Status", "Gameweek", "Home Team", "Away Team", "Actual In-Play", "Total Match Time", "Home Total Wasted", "Away Total Wasted"]
             st.dataframe(df_preview[preview_cols], use_container_width=True, hide_index=True)
 
             valid_matches = [m for m in parsed_batch if m["_is_valid"]]
@@ -503,8 +498,10 @@ st.divider()
 if st.session_state.match_log.empty:
     st.info("No fixtures recorded yet. Upload match files above to populate the league table.")
 else:
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "🏆 Team Standings (Averages)",
+        "🌊 Flow & Fragmentation",
+        "⏱️ Added Time Integrity",
         "📺 VAR Stoppage Impact",
         "📝 Live Spreadsheet Editor & Export"
     ])
@@ -812,21 +809,105 @@ Game-by-game stoppage delay:
 Full breakdown tracked by @EffectiveMins #PremierLeague #PL #{selected_team.replace(' ', '')}"""
                 st.text_area("Draft Waste Trend Post", value=waste_post, height=230)
 
-    # ==========================
-    # TAB 2: VAR STOPPAGE IMPACT
-    # ==========================
+    # ==========================================
+    # TAB 2: FLOW & FRAGMENTATION ANALYSIS
+    # ==========================================
     with tab2:
+        st.subheader("🌊 Match Rhythm & Flow Dynamics")
+        st.caption("Measuring game disruption, whistle frequency, and continuous play streaks.")
+
+        df_flow = st.session_state.match_log.copy()
+        df_flow["InPlay_Sec"] = df_flow["Actual In-Play"].apply(time_to_seconds)
+        df_flow["Total_Sec"] = df_flow["Total Match Time"].apply(time_to_seconds)
+        df_flow["Longest_Sec"] = df_flow["Longest In-Play"].apply(time_to_seconds)
+        df_flow["Stops"] = df_flow["Game Stops"].astype(int)
+
+        # Action Frequency: How many seconds elapsed between each whistle
+        df_flow["Seconds Per Whistle"] = (df_flow["Total_Sec"] / df_flow["Stops"].replace(0, 1)).round(1)
+        df_flow["Match"] = df_flow["Home Team"] + " vs " + df_flow["Away Team"]
+
+        fl_c1, fl_c2, fl_c3, fl_c4 = st.columns(4)
+        with fl_c1:
+            st.metric("Avg Stops per Fixture", round(df_flow["Stops"].mean(), 1))
+        with fl_c2:
+            st.metric("League Pace (Whistle Every)", f"{round(df_flow['Seconds Per Whistle'].mean(), 1)}s")
+        with fl_c3:
+            longest_run = df_flow.sort_values(by="Longest_Sec", ascending=False).iloc[0]
+            st.metric("Longest Continuous Play", f"{longest_run['Longest In-Play']}", f"GW{longest_run['Gameweek']}")
+        with fl_c4:
+            most_stops = df_flow.sort_values(by="Stops", ascending=False).iloc[0]
+            st.metric("Most Fragmented Fixture", f"{most_stops['Stops']} Stops", f"GW{most_stops['Gameweek']}")
+
+        st.divider()
+
+        sub1, sub2 = st.columns([1.4, 1])
+        with sub1:
+            st.markdown("##### 🚨 Most Fragmented Fixtures (Highest Game Stops)")
+            fragmented_view = df_flow.sort_values(by="Stops", ascending=False)[[
+                "Gameweek", "Match", "Stops", "Seconds Per Whistle", "Actual In-Play", "Longest In-Play"
+            ]]
+            st.dataframe(fragmented_view, use_container_width=True, hide_index=True)
+
+        with sub2:
+            st.markdown("##### 🏃 Unbroken Sequences (Longest Play Runs)")
+            smooth_view = df_flow.sort_values(by="Longest_Sec", ascending=False)[[
+                "Gameweek", "Match", "Longest In-Play", "Actual In-Play"
+            ]]
+            st.dataframe(smooth_view, use_container_width=True, hide_index=True)
+
+    # ==========================================
+    # TAB 3: ADDED TIME INTEGRITY ANALYSIS
+    # ==========================================
+    with tab3:
+        st.subheader("⏱️ Added Time Integrity & Extra-Time Leakage")
+        st.caption("Tracking how much extra time was announced, how long matches actually ran, and actual ball-in-play during stoppage.")
+
+        df_at = st.session_state.match_log.copy()
+        df_at["Ann_Sec"] = df_at["Announced Added"].apply(time_to_seconds)
+        df_at["Act_Sec"] = df_at["Actual Added"].apply(time_to_seconds)
+        df_at["Ply_Sec"] = df_at["Played Added"].apply(time_to_seconds)
+
+        df_at["Overrun_Sec"] = df_at["Act_Sec"] - df_at["Ann_Sec"]
+        df_at["Overrun"] = df_at["Overrun_Sec"].apply(lambda s: f"+{seconds_to_time(s)}" if s >= 0 else f"-{seconds_to_time(abs(s))}")
+        df_at["Match"] = df_at["Home Team"] + " vs " + df_at["Away Team"]
+
+        tot_ann = df_at["Ann_Sec"].sum()
+        tot_act = df_at["Act_Sec"].sum()
+        tot_ply = df_at["Ply_Sec"].sum()
+
+        at_c1, at_c2, at_c3, at_c4 = st.columns(4)
+        with at_c1:
+            st.metric("Total Announced Added", seconds_to_time(tot_ann))
+        with at_c2:
+            st.metric("Total Actual Added", seconds_to_time(tot_act))
+        with at_c3:
+            net_over = tot_act - tot_ann
+            st.metric("Net Added Time Overrun", f"+{seconds_to_time(net_over)}" if net_over >= 0 else f"-{seconds_to_time(abs(net_over))}")
+        with at_c4:
+            at_pct = round((tot_ply / tot_act * 100), 1) if tot_act > 0 else 0.0
+            st.metric("Effective Stoppage Rate", f"{at_pct}%", "In-Play During Added")
+
+        st.divider()
+
+        st.markdown("##### 🔍 Matchday Added Time Performance")
+        df_at_view = df_at[[
+            "Gameweek", "Match", "Announced Added", "Actual Added", "Overrun", "Played Added", "Total Match Time"
+        ]].sort_values(by="Gameweek", ascending=False)
+        st.dataframe(df_at_view, use_container_width=True, hide_index=True)
+
+    # ==========================================
+    # TAB 4: VAR REVIEW IMPACT
+    # ==========================================
+    with tab4:
         st.subheader("📺 Premier League VAR Review Impact")
         st.caption("Tracking how video reviews affect stoppage time, flow, and total dead time per club.")
 
-        # Build VAR calculation table
         var_rows = []
         for _, r in st.session_state.match_log.iterrows():
             var_s = time_to_seconds(r["VAR Checks"])
             tot_s = time_to_seconds(r["Total Match Time"])
             has_var = 1 if var_s > 0 else 0
 
-            # Both clubs involved experience the review
             var_rows.append({
                 "Team": r["Home Team"],
                 "VAR_Sec": var_s,
@@ -844,7 +925,6 @@ Full breakdown tracked by @EffectiveMins #PremierLeague #PL #{selected_team.repl
 
         df_var_calc = pd.DataFrame(var_rows)
 
-        # 1. Headline summary cards across all matches
         total_league_var_sec = st.session_state.match_log["VAR Checks"].apply(time_to_seconds).sum()
         matches_with_var = (st.session_state.match_log["VAR Checks"].apply(time_to_seconds) > 0).sum()
         total_fixtures_count = len(st.session_state.match_log)
@@ -870,7 +950,6 @@ Full breakdown tracked by @EffectiveMins #PremierLeague #PL #{selected_team.repl
 
         st.divider()
 
-        # 2. Club-by-Club VAR Table
         st.markdown("##### 📊 Club VAR Exposure")
         var_grouped = df_var_calc.groupby("Team").agg({
             "VAR_Sec": ["count", "sum", "mean", "max"],
@@ -913,7 +992,6 @@ Full breakdown tracked by @EffectiveMins #PremierLeague #PL #{selected_team.repl
 
         st.divider()
 
-        # 3. Match-Level VAR Check Log
         st.markdown("##### ⏱️ Match Review Log (Ranked by Check Length)")
         match_var_log = st.session_state.match_log.copy()
         match_var_log["VAR_Sec"] = match_var_log["VAR Checks"].apply(time_to_seconds)
@@ -931,10 +1009,10 @@ Full breakdown tracked by @EffectiveMins #PremierLeague #PL #{selected_team.repl
             ]]
             st.dataframe(show_match_var, use_container_width=True, hide_index=True)
 
-    # ==========================
-    # TAB 3: LIVE SPREADSHEET EDITOR
-    # ==========================
-    with tab3:
+    # ==========================================
+    # TAB 5: LIVE SPREADSHEET EDITOR
+    # ==========================================
+    with tab5:
         st.markdown("💡 **Tip:** Double-click any cell to edit numbers directly. Select rows using the checkboxes on the left and hit `Delete` on your keyboard to remove specific fixtures.")
 
         edited_df = st.data_editor(
