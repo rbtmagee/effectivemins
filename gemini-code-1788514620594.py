@@ -61,7 +61,7 @@ def seconds_to_time(seconds: int) -> str:
     return f"{m:02d}:{s:02d}"
 
 def match_club_name(raw_name: str) -> str:
-    """Matches raw text names like 'Fulham FC' or 'Newcastle Utd' to our PL list."""
+    """Matches raw text names like 'Fulham FC' or 'Chelsea FC' to our PL club list."""
     if not raw_name:
         return ""
     cleaned = raw_name.lower().strip()
@@ -69,7 +69,6 @@ def match_club_name(raw_name: str) -> str:
         t_low = team.lower()
         if t_low in cleaned or cleaned in t_low:
             return team
-    # Common shorthand aliases
     aliases = {
         "man utd": "Manchester United",
         "man city": "Manchester City",
@@ -83,24 +82,29 @@ def match_club_name(raw_name: str) -> str:
             return canonical
     return raw_name.strip()
 
-# --- FULL ZERO-AI 365SCORES TEXT PARSER ---
+# --- ZERO-AI 365SCORES TEXT PARSER ---
 def parse_365_raw_text(content: str) -> dict:
     stats = {}
 
-    # 1. Automatic Gameweek Detection (e.g. 'Round 1' or 'Premier League, Round 2')
-    gw_m = re.search(r"Premier\s+League,?\s+Round\s+(\d+)", content, re.IGNORECASE)
-    if not gw_m:
-        gw_m = re.search(r"Round\s+(\d+)", content, re.IGNORECASE)
-    stats["detected_gw"] = int(gw_m.group(1)) if gw_m else None
+    # Slice content strictly before "Actual Play Time" to avoid top-bar navigation menus
+    header_section = content.split("Actual Play Time")[0] if "Actual Play Time" in content else content
 
-    # 2. Automatic Fixture Detection (e.g. 'Fulham Vs Chelsea')
-    teams_m = re.search(r"([A-Za-z0-9\s&.-]+?)\s+[Vv]s\s+([A-Za-z0-9\s&.-]+?)(?:\r?\n|<)", content)
-    if teams_m:
-        stats["detected_home"] = match_club_name(teams_m.group(1))
-        stats["detected_away"] = match_club_name(teams_m.group(2))
+    # 1. Automatic Fixture Detection: find all "Team Vs Team" and take the LAST one
+    all_fixtures = list(re.finditer(r"([A-Za-z0-9\s&.-]+?)\s+[Vv]s\s+([A-Za-z0-9\s&.-]+?)(?:\r?\n|<)", header_section))
+    if all_fixtures:
+        last_fixture = all_fixtures[-1]
+        stats["detected_home"] = match_club_name(last_fixture.group(1))
+        stats["detected_away"] = match_club_name(last_fixture.group(2))
     else:
         stats["detected_home"] = None
         stats["detected_away"] = None
+
+    # 2. Automatic Gameweek Detection: take the last "Round X" appearing before the match stats
+    all_rounds = list(re.finditer(r"Round\s+(\d+)", header_section, re.IGNORECASE))
+    if all_rounds:
+        stats["detected_gw"] = int(all_rounds[-1].group(1))
+    else:
+        stats["detected_gw"] = 1
 
     # 3. Match Durations
     act_m = re.search(r"Actual\s+(\d{1,2}:\d{2})", content, re.IGNORECASE)
@@ -226,7 +230,7 @@ with st.expander("➕ Log New Fixture", expanded=st.session_state.match_log.empt
 
     # TAB 1: FULL AUTO TEXT PARSER
     with ingest_tab1:
-        st.markdown("Upload the saved `.txt` file or paste text copied from the expanded 365Scores page. **Teams and Gameweek are detected automatically.**")
+        st.markdown("Upload the saved `.txt` file or paste text copied from the expanded 365Scores page.")
 
         input_mode = st.radio("Input Format:", ["📁 Upload .txt File", "📋 Paste Copied Text"], horizontal=True)
 
@@ -242,81 +246,95 @@ with st.expander("➕ Log New Fixture", expanded=st.session_state.match_log.empt
                 height=160
             )
 
-        # Preview auto-detected match details
         if raw_report_text.strip():
-            preview_stats = parse_365_raw_text(raw_report_text)
+            parsed_data = parse_365_raw_text(raw_report_text)
+
             st.write("---")
-            st.markdown("##### 🔍 Detected Match Details:")
-            det_c1, det_c2, det_c3, det_c4 = st.columns(4)
-            with det_c1:
-                st.metric("Gameweek", preview_stats["detected_gw"] or "Unknown")
-            with det_c2:
-                st.metric("Home Team", preview_stats["detected_home"] or "Unknown")
-            with det_c3:
-                st.metric("Away Team", preview_stats["detected_away"] or "Unknown")
-            with det_c4:
-                st.metric("Actual In-Play", preview_stats["actual_in_play"])
+            st.markdown("##### 🔍 Match Details Confirmation")
+            st.caption("Review or adjust the detected details before saving:")
 
-        st.write("")
-        btn_c1, btn_c2 = st.columns([2, 1])
-        with btn_c1:
-            parse_pressed = st.button("🚀 Record Match to Database", type="primary", use_container_width=True)
-        with btn_c2:
-            undo_pressed = st.button("↩️ Undo Last Entry", type="secondary", use_container_width=True)
+            conf_c1, conf_c2, conf_c3, conf_c4 = st.columns(4)
+            with conf_c1:
+                gw_val = int(parsed_data["detected_gw"]) if parsed_data.get("detected_gw") else 1
+                confirmed_gw = st.number_input("Gameweek", min_value=1, max_value=38, value=gw_val, step=1)
+            with conf_c2:
+                home_idx = PL_TEAMS.index(parsed_data["detected_home"]) if parsed_data.get("detected_home") in PL_TEAMS else 0
+                confirmed_home = st.selectbox("Home Team", PL_TEAMS, index=home_idx)
+            with conf_c3:
+                away_idx = PL_TEAMS.index(parsed_data["detected_away"]) if parsed_data.get("detected_away") in PL_TEAMS else 1
+                confirmed_away = st.selectbox("Away Team", PL_TEAMS, index=away_idx)
+            with conf_c4:
+                st.metric("Actual In-Play", parsed_data["actual_in_play"])
 
-        if undo_pressed:
-            if not st.session_state.match_log.empty:
-                removed_row = st.session_state.match_log.iloc[-1]
-                st.session_state.match_log = st.session_state.match_log.iloc[:-1].reset_index(drop=True)
-                st.session_state.match_log.to_csv(DATA_FILE, index=False, encoding="utf-8")
-                st.warning(f"Undid: {removed_row['Home Team']} vs {removed_row['Away Team']} (Gameweek {removed_row['Gameweek']})")
-                st.rerun()
-            else:
-                st.info("No fixtures to undo.")
+            st.write("")
+            btn_c1, btn_c2 = st.columns([2, 1])
+            with btn_c1:
+                save_pressed = st.button("🚀 Record Match to Database", type="primary", use_container_width=True)
+            with btn_c2:
+                undo_pressed = st.button("↩️ Undo Last Entry", type="secondary", use_container_width=True)
 
-        if parse_pressed:
-            if not raw_report_text.strip():
-                st.error("Please upload a .txt file or paste report text first.")
-            else:
-                parsed = parse_365_raw_text(raw_report_text)
+            if undo_pressed:
+                if not st.session_state.match_log.empty:
+                    removed_row = st.session_state.match_log.iloc[-1]
+                    st.session_state.match_log = st.session_state.match_log.iloc[:-1].reset_index(drop=True)
+                    st.session_state.match_log.to_csv(DATA_FILE, index=False, encoding="utf-8")
+                    st.warning(f"Undid: {removed_row['Home Team']} vs {removed_row['Away Team']} (Gameweek {removed_row['Gameweek']})")
+                    st.rerun()
+                else:
+                    st.info("No fixtures to undo.")
 
-                if parsed["actual_in_play"] == "00:00" and parsed["home_total_wasted"] == "00:00":
-                    st.error("Could not find stoppage metrics. Make sure 'See More' was clicked on 365Scores before saving.")
-                elif not parsed["detected_home"] or not parsed["detected_away"]:
-                    st.error("Could not detect the club names automatically. Please check the text or use the manual form.")
+            if save_pressed:
+                if confirmed_home == confirmed_away:
+                    st.error("Home and Away clubs must be different.")
+                elif parsed_data["actual_in_play"] == "00:00" and parsed_data["home_total_wasted"] == "00:00":
+                    st.error("Could not find stoppage metrics. Verify that 'See More' was expanded prior to copying.")
                 else:
                     new_entry = {
-                        "Gameweek": parsed["detected_gw"] if parsed["detected_gw"] else 1,
-                        "Home Team": parsed["detected_home"],
-                        "Away Team": parsed["detected_away"],
-                        "Actual In-Play": parsed["actual_in_play"],
-                        "Total Match Time": parsed["total_time"],
-                        "VAR Checks": parsed["var_checks"],
-                        "Game Stops": parsed["game_stops"],
-                        "Longest In-Play": parsed["longest_in_play"],
-                        "Announced Added": parsed["announced_added"],
-                        "Actual Added": parsed["actual_added"],
-                        "Played Added": parsed["played_added"],
-                        "Home Goal Kicks": parsed["home_goal_kicks"],
-                        "Away Goal Kicks": parsed["away_goal_kicks"],
-                        "Home Free Kicks": parsed["home_free_kicks"],
-                        "Away Free Kicks": parsed["away_free_kicks"],
-                        "Home Throw Ins": parsed["home_throw_ins"],
-                        "Away Throw Ins": parsed["away_throw_ins"],
-                        "Home Corners": parsed["home_corners"],
-                        "Away Corners": parsed["away_corners"],
-                        "Home Other": parsed["home_other"],
-                        "Away Other": parsed["away_other"],
-                        "Home Total Wasted": parsed["home_total_wasted"],
-                        "Away Total Wasted": parsed["away_total_wasted"]
+                        "Gameweek": int(confirmed_gw),
+                        "Home Team": confirmed_home,
+                        "Away Team": confirmed_away,
+                        "Actual In-Play": parsed_data["actual_in_play"],
+                        "Total Match Time": parsed_data["total_time"],
+                        "VAR Checks": parsed_data["var_checks"],
+                        "Game Stops": parsed_data["game_stops"],
+                        "Longest In-Play": parsed_data["longest_in_play"],
+                        "Announced Added": parsed_data["announced_added"],
+                        "Actual Added": parsed_data["actual_added"],
+                        "Played Added": parsed_data["played_added"],
+                        "Home Goal Kicks": parsed_data["home_goal_kicks"],
+                        "Away Goal Kicks": parsed_data["away_goal_kicks"],
+                        "Home Free Kicks": parsed_data["home_free_kicks"],
+                        "Away Free Kicks": parsed_data["away_free_kicks"],
+                        "Home Throw Ins": parsed_data["home_throw_ins"],
+                        "Away Throw Ins": parsed_data["away_throw_ins"],
+                        "Home Corners": parsed_data["home_corners"],
+                        "Away Corners": parsed_data["away_corners"],
+                        "Home Other": parsed_data["home_other"],
+                        "Away Other": parsed_data["away_other"],
+                        "Home Total Wasted": parsed_data["home_total_wasted"],
+                        "Away Total Wasted": parsed_data["away_total_wasted"]
                     }
 
-                    st.session_state.match_log = pd.concat(
-                        [st.session_state.match_log, pd.DataFrame([new_entry])],
-                        ignore_index=True
+                    # Upsert check: update record if fixture already logged
+                    existing_mask = (
+                        (st.session_state.match_log["Gameweek"] == new_entry["Gameweek"]) &
+                        (st.session_state.match_log["Home Team"] == new_entry["Home Team"]) &
+                        (st.session_state.match_log["Away Team"] == new_entry["Away Team"])
                     )
+
+                    if existing_mask.any():
+                        for col_name, col_val in new_entry.items():
+                            st.session_state.match_log.loc[existing_mask, col_name] = col_val
+                        msg = f"Updated existing record for Gameweek {new_entry['Gameweek']}: {confirmed_home} vs {confirmed_away}!"
+                    else:
+                        st.session_state.match_log = pd.concat(
+                            [st.session_state.match_log, pd.DataFrame([new_entry])],
+                            ignore_index=True
+                        )
+                        msg = f"Recorded Gameweek {new_entry['Gameweek']}: {confirmed_home} vs {confirmed_away} successfully!"
+
                     st.session_state.match_log.to_csv(DATA_FILE, index=False, encoding="utf-8")
-                    st.success(f"Recorded Gameweek {new_entry['Gameweek']}: {new_entry['Home Team']} vs {new_entry['Away Team']} successfully!")
+                    st.success(msg)
                     st.rerun()
 
     # TAB 2: MANUAL ENTRY FORM
@@ -530,7 +548,7 @@ Data tracked by @EffectiveMins #PremierLeague #PL"""
 
     # --- TAB 2: LIVE SPREADSHEET EDITOR ---
     with tab2:
-        st.markdown("💡 **Tip:** Double-click any cell to edit numbers directly. Select rows using the checkboxes on the left and hit `Delete` on your keyboard to remove fixtures.")
+        st.markdown("💡 **Tip:** Double-click any cell to edit numbers directly. Select rows using the checkboxes on the left and hit `Delete` on your keyboard to remove specific fixtures.")
 
         edited_df = st.data_editor(
             st.session_state.match_log,
