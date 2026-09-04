@@ -39,6 +39,12 @@ MATCH_COLUMNS = [
     "Home Total Wasted", "Away Total Wasted"
 ]
 
+# Initialise widget clearing counters
+if "uploader_id" not in st.session_state:
+    st.session_state.uploader_id = 0
+if "paste_id" not in st.session_state:
+    st.session_state.paste_id = 0
+
 # --- UTILITY HELPERS ---
 def clean_val(val) -> str:
     if pd.isna(val) or val is None:
@@ -89,7 +95,7 @@ def parse_365_raw_text(content: str) -> dict:
     # Slice content strictly before "Actual Play Time" to avoid top-bar navigation menus
     header_section = content.split("Actual Play Time")[0] if "Actual Play Time" in content else content
 
-    # 1. Automatic Fixture Detection: find all "Team Vs Team" and take the LAST one
+    # 1. Automatic Fixture Detection
     all_fixtures = list(re.finditer(r"([A-Za-z0-9\s&.-]+?)\s+[Vv]s\s+([A-Za-z0-9\s&.-]+?)(?:\r?\n|<)", header_section))
     if all_fixtures:
         last_fixture = all_fixtures[-1]
@@ -99,7 +105,7 @@ def parse_365_raw_text(content: str) -> dict:
         stats["detected_home"] = None
         stats["detected_away"] = None
 
-    # 2. Automatic Gameweek Detection: take the last "Round X" appearing before the match stats
+    # 2. Automatic Gameweek Detection
     all_rounds = list(re.finditer(r"Round\s+(\d+)", header_section, re.IGNORECASE))
     if all_rounds:
         stats["detected_gw"] = int(all_rounds[-1].group(1))
@@ -236,14 +242,20 @@ with st.expander("➕ Log New Fixture", expanded=st.session_state.match_log.empt
 
         raw_report_text = ""
         if input_mode == "📁 Upload .txt File":
-            uploaded_txt = st.file_uploader("Upload Match Report File", type=["txt"], label_visibility="collapsed")
+            uploaded_txt = st.file_uploader(
+                "Upload Match Report File",
+                type=["txt"],
+                label_visibility="collapsed",
+                key=f"txt_uploader_{st.session_state.uploader_id}"  # Dynamic key resets on save
+            )
             if uploaded_txt is not None:
                 raw_report_text = uploaded_txt.read().decode("utf-8", errors="ignore")
         else:
             raw_report_text = st.text_area(
                 "Paste Report Text Here:",
                 placeholder="Fulham Vs Chelsea\nEngland, Premier League, Round 1\nActual 60:58\nTotal 96:20\n...",
-                height=160
+                height=160,
+                key=f"txt_paste_{st.session_state.paste_id}"  # Dynamic key resets on save
             )
 
         if raw_report_text.strip():
@@ -315,7 +327,7 @@ with st.expander("➕ Log New Fixture", expanded=st.session_state.match_log.empt
                         "Away Total Wasted": parsed_data["away_total_wasted"]
                     }
 
-                    # Upsert check: update record if fixture already logged
+                    # Upsert check
                     existing_mask = (
                         (st.session_state.match_log["Gameweek"] == new_entry["Gameweek"]) &
                         (st.session_state.match_log["Home Team"] == new_entry["Home Team"]) &
@@ -325,16 +337,17 @@ with st.expander("➕ Log New Fixture", expanded=st.session_state.match_log.empt
                     if existing_mask.any():
                         for col_name, col_val in new_entry.items():
                             st.session_state.match_log.loc[existing_mask, col_name] = col_val
-                        msg = f"Updated existing record for Gameweek {new_entry['Gameweek']}: {confirmed_home} vs {confirmed_away}!"
                     else:
                         st.session_state.match_log = pd.concat(
                             [st.session_state.match_log, pd.DataFrame([new_entry])],
                             ignore_index=True
                         )
-                        msg = f"Recorded Gameweek {new_entry['Gameweek']}: {confirmed_home} vs {confirmed_away} successfully!"
 
                     st.session_state.match_log.to_csv(DATA_FILE, index=False, encoding="utf-8")
-                    st.success(msg)
+
+                    # Advance keys to wipe the uploaded file / pasted text clean
+                    st.session_state.uploader_id += 1
+                    st.session_state.paste_id += 1
                     st.rerun()
 
     # TAB 2: MANUAL ENTRY FORM
