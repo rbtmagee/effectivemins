@@ -3,4 +3,6 @@ pandas
 matplotlib
 pillow
 streamlit-paste-button
+google-genai
 groq
+openai
