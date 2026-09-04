@@ -66,7 +66,7 @@ else:
 
 st.title("⏱️ EffectiveMins: Premier League Stoppage Tracker")
 
-# --- SIDEBAR: CONFIG & DATABASE CONTROLS ---
+# --- SIDEBAR: CONFIG & CONTROLS ---
 with st.sidebar:
     st.header("⚙️ Configuration")
     secret_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -99,46 +99,39 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
         away_team = st.selectbox("Away Team", PL_TEAMS, index=1)
 
     st.markdown("### Image Input")
-    input_c1, input_c2 = st.columns([1, 1])
+    upload_method = st.radio("Choose Input Mode:", ["📋 Paste Screenshot", "📁 Upload Image File"], horizontal=True)
 
-    with input_c1:
-        st.markdown("**Option 1: Paste from Clipboard**")
+    active_image_bytes = None
+    active_mime_type = "image/png"
+
+    if upload_method == "📋 Paste Screenshot":
         paste_result = paste_image_button(
-            label="📋 Click to Paste Screenshot",
+            label="📋 Click to Paste from Clipboard",
             text_color="#ffffff",
             background_color="#007acc",
             hover_background_color="#005999",
             errors="raise"
         )
-
-    with input_c2:
-        st.markdown("**Option 2: Upload File**")
-        uploaded_img = st.file_uploader("Upload 365Scores Graphic", type=["png", "jpg", "jpeg", "webp"], label_visibility="collapsed")
-
-    # Resolve active image
-    active_image_bytes = None
-    active_mime_type = "image/png"
-
-    if paste_result.image_data is not None:
-        buf = io.BytesIO()
-        paste_result.image_data.save(buf, format="PNG")
-        active_image_bytes = buf.getvalue()
-        st.image(paste_result.image_data, caption="Clipboard Graphic Loaded", width=340)
-    elif uploaded_img is not None:
-        active_image_bytes = uploaded_img.getvalue()
-        active_mime_type = uploaded_img.type or "image/png"
-        st.image(uploaded_img, caption="Uploaded Graphic Loaded", width=340)
+        if paste_result.image_data is not None:
+            buf = io.BytesIO()
+            paste_result.image_data.save(buf, format="PNG")
+            active_image_bytes = buf.getvalue()
+            st.image(paste_result.image_data, caption="Clipboard Graphic Loaded", width=340)
+    else:
+        uploaded_img = st.file_uploader("Upload 365Scores Graphic", type=["png", "jpg", "jpeg", "webp"])
+        if uploaded_img is not None:
+            active_image_bytes = uploaded_img.getvalue()
+            active_mime_type = uploaded_img.type or "image/png"
+            st.image(uploaded_img, caption="Uploaded Graphic Loaded", width=340)
 
     st.write("")
     
-    # Action buttons: Extract vs Undo
     btn_c1, btn_c2 = st.columns([2, 1])
     with btn_c1:
         extract_pressed = st.button("🚀 Extract & Save Match Record", type="primary", use_container_width=True)
     with btn_c2:
         undo_pressed = st.button("↩️ Undo Last Entry", type="secondary", use_container_width=True)
 
-    # Handle Undo
     if undo_pressed:
         if not st.session_state.match_log.empty:
             removed_row = st.session_state.match_log.iloc[-1]
@@ -149,16 +142,15 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
         else:
             st.info("No entries to undo.")
 
-    # Handle Extraction
     if extract_pressed:
         if not api_key:
             st.error("Please enter your Gemini API key in the left sidebar.")
         elif home_team == away_team:
             st.error("Home and Away teams must be different.")
         elif active_image_bytes is None:
-            st.error("Please paste or upload a 365Scores graphic first.")
+            st.error("Please paste or upload a new 365Scores graphic first.")
         else:
-            with st.spinner("Scanning 365Scores stoppage metrics..."):
+            with st.spinner("Extracting stats with Gemini 3.6 Flash..."):
                 try:
                     client = genai.Client(api_key=api_key)
 
@@ -362,7 +354,7 @@ Data tracked by @EffectiveMins #PremierLeague #PL"""
 
     # --- TAB 2: LIVE SPREADSHEET EDITOR ---
     with tab2:
-        st.markdown("💡 **Tip:** Double-click any cell to edit numbers directly. Select rows using the checkboxes on the left and hit `Delete` on your keyboard to remove specific fixtures.")
+        st.markdown("💡 **Tip:** Double-click any cell to edit numbers directly. Select rows using the checkboxes on the left and press `Delete` on your keyboard to remove specific fixtures.")
         
         edited_df = st.data_editor(
             st.session_state.match_log,
@@ -371,7 +363,6 @@ Data tracked by @EffectiveMins #PremierLeague #PL"""
             key="match_data_editor"
         )
 
-        # Detect changes in the data editor and persist
         if not edited_df.equals(st.session_state.match_log):
             st.session_state.match_log = edited_df.reset_index(drop=True)
             st.session_state.match_log.to_csv(DATA_FILE, index=False)
