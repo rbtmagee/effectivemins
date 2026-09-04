@@ -28,7 +28,7 @@ PL_TEAMS = sorted([
     "Nottingham Forest", "Sunderland", "Tottenham"
 ])
 
-# High-resolution badge CDN mappings
+# Official Premier League CDN Badge IDs (Uniform & Permanent)
 CLUB_BADGES = {
     "Arsenal": "https://resources.premierleague.com/premierleague/badges/t3.png",
     "Aston Villa": "https://resources.premierleague.com/premierleague/badges/t7.png",
@@ -36,11 +36,11 @@ CLUB_BADGES = {
     "Brentford": "https://resources.premierleague.com/premierleague/badges/t94.png",
     "Brighton": "https://resources.premierleague.com/premierleague/badges/t36.png",
     "Chelsea": "https://resources.premierleague.com/premierleague/badges/t8.png",
-    "Coventry City": "https://upload.wikimedia.org/wikipedia/en/thumb/9/94/Coventry_City_FC_logo.svg/240px-Coventry_City_FC_logo.svg.png",
+    "Coventry City": "https://resources.premierleague.com/premierleague/badges/t9.png",
     "Crystal Palace": "https://resources.premierleague.com/premierleague/badges/t31.png",
     "Everton": "https://resources.premierleague.com/premierleague/badges/t11.png",
     "Fulham": "https://resources.premierleague.com/premierleague/badges/t54.png",
-    "Hull City": "https://upload.wikimedia.org/wikipedia/en/thumb/5/54/Hull_City_A.F.C._logo.svg/240px-Hull_City_A.F.C._logo.svg.png",
+    "Hull City": "https://resources.premierleague.com/premierleague/badges/t88.png",
     "Ipswich Town": "https://resources.premierleague.com/premierleague/badges/t40.png",
     "Leeds United": "https://resources.premierleague.com/premierleague/badges/t2.png",
     "Liverpool": "https://resources.premierleague.com/premierleague/badges/t14.png",
@@ -581,20 +581,33 @@ else:
         # --- TWITTER INFOGRAPHIC GENERATOR ---
         st.subheader("Generate Graphic for @EffectiveMins")
         
-        col_select, col_type = st.columns([1, 1.5])
+        col_select, col_type = st.columns([1, 1.8])
         with col_select:
-            selected_team = st.selectbox("Select Club", standings["Team"])
+            # Sorted alphabetically regardless of table sort
+            alphabetical_teams = sorted(standings["Team"].unique())
+            selected_team = st.selectbox("Select Club", alphabetical_teams)
         with col_type:
             chart_type = st.radio(
                 "Select Graphic Type:",
-                ["Dead-Ball Delay Profile (Bar Chart)", "In-Play Trend Across Gameweeks (Line Chart)"],
-                horizontal=True
+                [
+                    "Dead-Ball Delay Profile (Bar Chart)",
+                    "In-Play Trend Across Gameweeks (Line Chart)",
+                    "Time Wasting Trend Across Gameweeks (Line Chart)"
+                ],
+                horizontal=False
             )
 
         t_row = standings[standings["Team"] == selected_team].iloc[0]
         badge_url = CLUB_BADGES.get(selected_team, "")
 
         cg1, cg2 = st.columns([1.3, 1])
+
+        # Prepare team fixture history
+        team_fixtures = st.session_state.match_log[
+            (st.session_state.match_log["Home Team"] == selected_team) |
+            (st.session_state.match_log["Away Team"] == selected_team)
+        ].copy()
+        team_fixtures = team_fixtures.sort_values(by="Gameweek").reset_index(drop=True)
 
         # OPTION 1: DEAD-BALL DELAY PROFILE
         if chart_type == "Dead-Ball Delay Profile (Bar Chart)":
@@ -640,14 +653,8 @@ Biggest delay factors:
 Data tracked by @EffectiveMins #PremierLeague #PL"""
                 st.text_area("Draft Post", value=post_text, height=200)
 
-        # OPTION 2: GAME-BY-GAME FLUCTUATION LINE CHART
-        else:
-            team_fixtures = st.session_state.match_log[
-                (st.session_state.match_log["Home Team"] == selected_team) |
-                (st.session_state.match_log["Away Team"] == selected_team)
-            ].copy()
-            team_fixtures = team_fixtures.sort_values(by="Gameweek").reset_index(drop=True)
-
+        # OPTION 2: IN-PLAY TREND (LINE CHART)
+        elif chart_type == "In-Play Trend Across Gameweeks (Line Chart)":
             with cg1:
                 fig, ax = plt.subplots(figsize=(10, 5.5), facecolor="#0e1621")
                 ax.set_facecolor("#0e1621")
@@ -665,13 +672,11 @@ Data tracked by @EffectiveMins #PremierLeague #PL"""
                     y_vals.append(inplay_secs / 60.0)
                     time_strings.append(match["Actual In-Play"])
 
-                # Plot line & points
                 ax.plot(range(len(x_labels)), y_vals, color="#00d2ff", linewidth=2.8, marker="o", markersize=9, markerfacecolor="#ffffff", markeredgecolor="#00d2ff", zorder=4)
 
                 # Benchmark line at 60 minutes
                 ax.axhline(60.0, color="#ff495c", linestyle="--", alpha=0.55, linewidth=1.5, label="60-Min Benchmark", zorder=2)
 
-                # Point value labels
                 for idx, (val, t_str) in enumerate(zip(y_vals, time_strings)):
                     ax.annotate(
                         t_str,
@@ -697,7 +702,6 @@ Data tracked by @EffectiveMins #PremierLeague #PL"""
                 ax.legend(loc="lower right", facecolor="#151e22", edgecolor="#3a4145", labelcolor="#ffffff")
                 fig.text(0.82, 0.02, "@EffectiveMins", color="#888888", fontsize=10, style='italic')
 
-                # Buffer y limits
                 if y_vals:
                     ax.set_ylim(min(y_vals) - 4, max(y_vals) + 5)
 
@@ -728,6 +732,86 @@ Game-by-game breakdown:
 
 Follow @EffectiveMins for full Premier League stoppage metrics #PL #{selected_team.replace(' ', '')}"""
                 st.text_area("Draft Trend Post", value=trend_post, height=230)
+
+        # OPTION 3: TIME WASTING TREND (LINE CHART)
+        else:
+            with cg1:
+                fig, ax = plt.subplots(figsize=(10, 5.5), facecolor="#0e1621")
+                ax.set_facecolor("#0e1621")
+
+                x_labels = []
+                waste_vals = []
+                waste_strings = []
+
+                for _, match in team_fixtures.iterrows():
+                    is_home = (match["Home Team"] == selected_team)
+                    opp = match["Away Team"] if is_home else match["Home Team"]
+                    venue = "H" if is_home else "A"
+                    x_labels.append(f"GW{match['Gameweek']}\nvs {opp[:3].upper()} ({venue})")
+
+                    waste_col = "Home Total Wasted" if is_home else "Away Total Wasted"
+                    waste_secs = time_to_seconds(match[waste_col])
+                    waste_vals.append(waste_secs / 60.0)
+                    waste_strings.append(match[waste_col])
+
+                # Orange / Amber line for delay/waste tracking
+                ax.plot(range(len(x_labels)), waste_vals, color="#ffb800", linewidth=2.8, marker="s", markersize=9, markerfacecolor="#ffffff", markeredgecolor="#ffb800", zorder=4)
+
+                for idx, (val, t_str) in enumerate(zip(waste_vals, waste_strings)):
+                    ax.annotate(
+                        t_str,
+                        (idx, val),
+                        textcoords="offset points",
+                        xytext=(0, 11),
+                        ha="center",
+                        color="#ffffff",
+                        fontsize=10,
+                        weight="bold"
+                    )
+
+                ax.set_xticks(range(len(x_labels)))
+                ax.set_xticklabels(x_labels, color="#ffffff", fontsize=10)
+                ax.tick_params(colors="#ffffff", labelsize=10)
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                ax.spines['bottom'].set_color('#888888')
+                ax.spines['left'].set_color('#888888')
+                ax.set_ylabel("Minutes Wasted / Delayed", color="#ffffff", fontsize=11)
+                ax.set_title(f"{selected_team.upper()} — Dead-Ball Time Wasted by Gameweek", color="#ffffff", fontsize=15, weight="bold", pad=15)
+                ax.grid(color="#ffffff", alpha=0.08, linestyle=":")
+                fig.text(0.82, 0.02, "@EffectiveMins", color="#888888", fontsize=10, style='italic')
+
+                if waste_vals:
+                    ax.set_ylim(min(waste_vals) - 3, max(waste_vals) + 4)
+
+                st.pyplot(fig)
+
+            with cg2:
+                if badge_url:
+                    st.image(badge_url, width=70)
+                st.markdown("### Ready-to-Post Copy")
+
+                waste_breakdown = []
+                for _, match in team_fixtures.iterrows():
+                    is_home = (match["Home Team"] == selected_team)
+                    opp = match["Away Team"] if is_home else match["Home Team"]
+                    loc = "H" if is_home else "A"
+                    w_col = "Home Total Wasted" if is_home else "Away Total Wasted"
+                    waste_breakdown.append(f"• GW{match['Gameweek']} vs {opp} ({loc}): {match[w_col]}")
+
+                formatted_waste = "\n".join(waste_breakdown)
+
+                waste_post = f"""⏱️ Dead-Ball Time Wasted Trend: {selected_team}
+
+Game-by-game stoppage delay:
+{formatted_waste}
+
+• Season Average Lost: {t_row['Avg Total Wasted']} per match
+• Most Time Wasted: {seconds_to_time(max(time_to_seconds(m['Home Total Wasted' if m['Home Team'] == selected_team else 'Away Total Wasted']) for _, m in team_fixtures.iterrows()))}
+• Cleanest Match: {seconds_to_time(min(time_to_seconds(m['Home Total Wasted' if m['Home Team'] == selected_team else 'Away Total Wasted']) for _, m in team_fixtures.iterrows()))}
+
+Full breakdown tracked by @EffectiveMins #PremierLeague #PL #{selected_team.replace(' ', '')}"""
+                st.text_area("Draft Waste Trend Post", value=waste_post, height=230)
 
     # --- TAB 2: LIVE SPREADSHEET EDITOR ---
     with tab2:
