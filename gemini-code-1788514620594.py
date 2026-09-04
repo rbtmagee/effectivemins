@@ -141,30 +141,36 @@ def parse_match_data(filename: str, raw_content: str) -> dict:
     stats["Home Team"] = home_team
     stats["Away Team"] = away_team
 
-    # Robust Gameweek: Look for 'Premier League, Round X' first
     gw_m = re.search(r"Premier\s+League,?\s+Round\s+(\d+)", text, re.IGNORECASE)
     if not gw_m:
         gw_m = re.search(r"(?:Round|GW|Gameweek)\s*(\d+)", filename, re.IGNORECASE)
     stats["Gameweek"] = int(gw_m.group(1)) if gw_m else 1
 
-    act_m = re.search(r"Actual\s+(\d{1,2}:\d{2})", text, re.IGNORECASE)
-    tot_m = re.search(r"Total\s+(\d{1,2}:\d{2})", text, re.IGNORECASE)
+    # Isolate Actual Play Time block to avoid matching dead-ball totals
+    play_section = text
+    if "Actual Play Time" in text:
+        play_section = text.split("Actual Play Time", 1)[1]
+        if "Time Wasted On" in play_section:
+            play_section = play_section.split("Time Wasted On", 1)[0]
+
+    act_m = re.search(r"Actual\s+(\d+:\d{2})", play_section, re.IGNORECASE)
+    tot_m = re.search(r"Total\s+(\d+:\d{2})", play_section, re.IGNORECASE)
     stats["Actual In-Play"] = act_m.group(1) if act_m else "00:00"
     stats["Total Match Time"] = tot_m.group(1) if tot_m else "90:00"
 
     stops_m = re.search(r"Game\s*Stops\s*(?:\r?\n|\s+)*(\d+)", text, re.IGNORECASE)
-    longest_m = re.search(r"Longest\s*In-Play\s*(?:\r?\n|\s+)*(\d{1,2}:\d{2})", text, re.IGNORECASE)
+    longest_m = re.search(r"Longest\s*In-Play\s*(?:\r?\n|\s+)*(\d+:\d{2})", text, re.IGNORECASE)
     stats["Game Stops"] = int(stops_m.group(1)) if stops_m else 0
     stats["Longest In-Play"] = longest_m.group(1) if longest_m else "00:00"
 
-    ann_m = re.search(r"(\d{1,2}:\d{2})\s*(?:\r?\n|\s+)*Announced", text, re.IGNORECASE)
-    act_add_m = re.search(r"(\d{1,2}:\d{2})\s*(?:\r?\n|\s+)*Actual\s+Added", text, re.IGNORECASE)
+    ann_m = re.search(r"(\d+:\d{2})\s*(?:\r?\n|\s+)*Announced", text, re.IGNORECASE)
+    act_add_m = re.search(r"(\d+:\d{2})\s*(?:\r?\n|\s+)*Actual\s+Added", text, re.IGNORECASE)
     stats["Announced Added"] = ann_m.group(1) if ann_m else "00:00"
     stats["Actual Added"] = act_add_m.group(1) if act_add_m else "00:00"
     stats["Played Added"] = "00:00"
     stats["VAR Checks"] = "00:00"
 
-    var_m = re.search(r"(?:Significant\s+)?VAR\s*Checks\s*(?:\r?\n|\s+)*(\d{1,2}:\d{2})", text, re.IGNORECASE)
+    var_m = re.search(r"(?:Significant\s+)?VAR\s*Checks\s*(?:\r?\n|\s+)*(\d+:\d{2})", text, re.IGNORECASE)
     if var_m:
         stats["VAR Checks"] = var_m.group(1)
 
@@ -182,7 +188,7 @@ def parse_match_data(filename: str, raw_content: str) -> dict:
     ]
 
     for label, pattern in categories:
-        m = re.search(rf"(\d{{1,2}}:\d{{2}})\s*(?:\r?\n|\s+)*{pattern}\s*(?:\r?\n|\s+)*(\d{{1,2}}:\d{{2}})", wasted_section, re.IGNORECASE)
+        m = re.search(rf"(\d+:\d{2})\s*(?:\r?\n|\s+)*{pattern}\s*(?:\r?\n|\s+)*(\d+:\d{2})", wasted_section, re.IGNORECASE)
         if m:
             stats[f"Home {label}"] = m.group(1)
             stats[f"Away {label}"] = m.group(2)
@@ -190,7 +196,6 @@ def parse_match_data(filename: str, raw_content: str) -> dict:
             stats[f"Home {label}"] = "00:00"
             stats[f"Away {label}"] = "00:00"
 
-    # Status check: Did the file contain stoppage metrics?
     stats["_is_valid"] = not (stats["Actual In-Play"] == "00:00" and stats["Home Total Wasted"] == "00:00")
     return stats
 
@@ -306,7 +311,7 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
             invalid_count = len(parsed_batch) - len(valid_matches)
 
             if invalid_count > 0:
-                st.warning(f"{invalid_count} file(s) are blank HTML shells without stats. Only the {len(valid_matches)} valid fixture(s) will be committed.")
+                st.warning(f"{invalid_count} file(s) lack stoppage numbers. Only the {len(valid_matches)} valid fixture(s) will be committed.")
 
             st.write("")
             btn_c1, btn_c2 = st.columns([2, 1])
