@@ -66,12 +66,25 @@ else:
 
 st.title("⏱️ EffectiveMins: Premier League Stoppage Tracker")
 
-# --- SIDEBAR: CONFIG & API KEY ---
+# --- SIDEBAR: CONFIG & DATABASE CONTROLS ---
 with st.sidebar:
     st.header("⚙️ Configuration")
     secret_key = st.secrets.get("GEMINI_API_KEY", "")
     api_key = st.text_input("Gemini API Key", value=secret_key, type="password")
     st.caption("Obtain a free key at [Google AI Studio](https://aistudio.google.com/)")
+    st.divider()
+
+    st.header("🛠️ Database Admin")
+    st.write(f"Logged Fixtures: `{len(st.session_state.match_log)}`")
+    
+    with st.expander("⚠️ Danger Zone"):
+        if st.button("🗑️ Reset Entire Database", type="secondary"):
+            st.session_state.match_log = pd.DataFrame(columns=MATCH_COLUMNS)
+            if os.path.exists(DATA_FILE):
+                os.remove(DATA_FILE)
+            st.warning("All records wiped.")
+            st.rerun()
+
     st.divider()
     st.markdown("**@EffectiveMins** Stoppage Analytics")
 
@@ -117,7 +130,27 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
         st.image(uploaded_img, caption="Uploaded Graphic Loaded", width=340)
 
     st.write("")
-    if st.button("🚀 Extract & Save Match Record", type="primary"):
+    
+    # Action buttons: Extract vs Undo
+    btn_c1, btn_c2 = st.columns([2, 1])
+    with btn_c1:
+        extract_pressed = st.button("🚀 Extract & Save Match Record", type="primary", use_container_width=True)
+    with btn_c2:
+        undo_pressed = st.button("↩️ Undo Last Entry", type="secondary", use_container_width=True)
+
+    # Handle Undo
+    if undo_pressed:
+        if not st.session_state.match_log.empty:
+            removed_row = st.session_state.match_log.iloc[-1]
+            st.session_state.match_log = st.session_state.match_log.iloc[:-1].reset_index(drop=True)
+            st.session_state.match_log.to_csv(DATA_FILE, index=False)
+            st.warning(f"Undid: **{removed_row['Home Team']} vs {removed_row['Away Team']}** (Gameweek {removed_row['Gameweek']})")
+            st.rerun()
+        else:
+            st.info("No entries to undo.")
+
+    # Handle Extraction
+    if extract_pressed:
         if not api_key:
             st.error("Please enter your Gemini API key in the left sidebar.")
         elif home_team == away_team:
@@ -215,7 +248,7 @@ st.divider()
 if st.session_state.match_log.empty:
     st.info("No fixture data recorded yet. Paste or upload your first 365Scores graphic above.")
 else:
-    tab1, tab2 = st.tabs(["🏆 Team Standings (Averages)", "📋 Full Database & Export"])
+    tab1, tab2 = st.tabs(["🏆 Team Standings (Averages)", "📝 Editable Match Log & Export"])
 
     with tab1:
         team_rows = []
@@ -327,7 +360,24 @@ Biggest delay factors:
 Data tracked by @EffectiveMins #PremierLeague #PL"""
             st.text_area("Draft Post", value=post_text, height=190)
 
+    # --- TAB 2: LIVE SPREADSHEET EDITOR ---
     with tab2:
-        st.dataframe(st.session_state.match_log, use_container_width=True)
+        st.markdown("💡 **Tip:** Double-click any cell to edit numbers directly. Select rows using the checkboxes on the left and hit `Delete` on your keyboard to remove specific fixtures.")
+        
+        edited_df = st.data_editor(
+            st.session_state.match_log,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="match_data_editor"
+        )
+
+        # Detect changes in the data editor and persist
+        if not edited_df.equals(st.session_state.match_log):
+            st.session_state.match_log = edited_df.reset_index(drop=True)
+            st.session_state.match_log.to_csv(DATA_FILE, index=False)
+            st.success("Changes saved to database!")
+            st.rerun()
+
+        st.write("")
         csv_export = st.session_state.match_log.to_csv(index=False).encode('utf-8')
-        st.download_button("Download Full CSV Database", data=csv_export, file_name="effective_mins_database.csv", mime="text/csv")
+        st.download_button("📥 Download Full CSV Database", data=csv_export, file_name="effective_mins_database.csv", mime="text/csv")
