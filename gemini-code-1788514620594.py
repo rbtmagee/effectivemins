@@ -4,24 +4,12 @@ import matplotlib.pyplot as plt
 import json
 import os
 import io
+import re
 import base64
 import traceback
 from PIL import Image
 from streamlit_paste_button import paste_image_button
-
-# Conditional imports for engines
-try:
-    from google import genai
-    from google.genai import types
-    HAS_GENAI = True
-except ImportError:
-    HAS_GENAI = False
-
-try:
-    from groq import Groq
-    HAS_GROQ = True
-except ImportError:
-    HAS_GROQ = False
+from groq import Groq
 
 st.set_page_config(page_title="EffectiveMins Tracker", layout="wide")
 
@@ -44,47 +32,19 @@ PL_TEAMS = sorted([
     "Nottingham Forest", "Sunderland", "Tottenham"
 ])
 
-PROMPT_TEXT = """
-Extract the match stoppage statistics from this 365scores graphic into this exact JSON structure:
-{
-    "actual_in_play": "MM:SS",
-    "total_time": "MM:SS",
-    "var_checks": "MM:SS",
-    "game_stops": 0,
-    "longest_in_play": "MM:SS",
-    "announced_added": "MM:SS",
-    "actual_added": "MM:SS",
-    "played_added": "MM:SS",
-    "home_goal_kicks": "MM:SS",
-    "away_goal_kicks": "MM:SS",
-    "home_free_kicks": "MM:SS",
-    "away_free_kicks": "MM:SS",
-    "home_throw_ins": "MM:SS",
-    "away_throw_ins": "MM:SS",
-    "home_corners": "MM:SS",
-    "away_corners": "MM:SS",
-    "home_other": "MM:SS",
-    "away_other": "MM:SS",
-    "home_total_wasted": "MM:SS",
-    "away_total_wasted": "MM:SS"
-}
-Rules:
-- In 'Time Wasted On', left column is Home side, right column is Away side.
-- 'game_stops' must be an integer.
-- Format all durations as 'MM:SS' strings.
-- Return pure JSON only. Do not include markdown ticks, intros, or explanations.
-"""
-
-# --- HELPER TIME CONVERSIONS ---
-def clean_val(val) -> str:
-    """Sanitises unicode characters like dashes into standard ascii equivalents."""
+# --- HELPER FUNCTIONS & STRICT SANITISATION ---
+def sanitize_text(val) -> str:
+    """Strips all non-printable and non-ASCII unicode characters to prevent crashes."""
     if val is None:
         return "--"
-    return str(val).replace("–", "-").replace("—", "-").strip()
+    s = str(val).strip().replace("–", "-").replace("—", "-")
+    # Retain strictly standard printable ASCII characters
+    cleaned = re.sub(r"[^\x20-\x7E]", "", s)
+    return cleaned if cleaned else "--"
 
 def time_to_seconds(val: str) -> int:
     """Converts MM:SS or M:SS to integer seconds safely."""
-    s_val = clean_val(val)
+    s_val = sanitize_text(val)
     if not s_val or ":" not in s_val or s_val.startswith("-"):
         return 0
     try:
@@ -115,26 +75,22 @@ if os.path.exists(DATA_FILE):
     try:
         st.session_state.match_log = pd.read_csv(DATA_FILE, encoding="utf-8")
     except Exception:
-        st.session_state.match_log = pd.read_csv(DATA_FILE, encoding="latin1")
+        try:
+            st.session_state.match_log = pd.read_csv(DATA_FILE, encoding="latin1")
+        except Exception:
+            st.session_state.match_log = pd.DataFrame(columns=MATCH_COLUMNS)
 else:
     st.session_state.match_log = pd.DataFrame(columns=MATCH_COLUMNS)
 
 st.title("⏱️ EffectiveMins: Premier League Stoppage Tracker")
 
-# --- SIDEBAR: ENGINE & KEY CONFIG ---
+# --- SIDEBAR: CONFIG & DATABASE ADMIN ---
 with st.sidebar:
     st.header("⚙️ Configuration")
-    ai_engine = st.radio("Choose AI Engine:", ["Google Gemini (1,500/day free)", "Groq Llama Vision"], index=0)
-
-    if ai_engine == "Google Gemini (1,500/day free)":
-        default_gemini = st.secrets.get("GEMINI_API_KEY", "")
-        api_key = st.text_input("Gemini API Key", value=default_gemini, type="password")
-        st.caption("Using model: **`gemini-2.0-flash`** (1,500 free queries/day)")
-    else:
-        default_groq = st.secrets.get("GROQ_API_KEY", "")
-        api_key = st.text_input("Groq API Key (Free)", value=default_groq, type="password")
-        st.caption("Obtain key at [console.groq.com](https://console.groq.com/)")
-
+    secret_key = st.secrets.get("GROQ_API_KEY", "")
+    api_key = st.text_input("Groq API Key (Free)", value=secret_key, type="password")
+    st.caption("Obtain key at [console.groq.com](https://console.groq.com/)")
+    
     st.divider()
     st.header("🛠️ Database Admin")
     st.write(f"Logged Fixtures: `{len(st.session_state.match_log)}`")
@@ -192,6 +148,7 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
     with btn_c2:
         undo_pressed = st.button("↩️ Undo Last Entry", type="secondary", use_container_width=True)
 
+    # Handle Undo
     if undo_pressed:
         if not st.session_state.match_log.empty:
             removed_row = st.session_state.match_log.iloc[-1]
@@ -202,85 +159,101 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
         else:
             st.info("No entries to undo.")
 
+    # Handle Extraction via Groq
     if extract_pressed:
         clean_key = api_key.strip() if api_key else ""
         if not clean_key:
-            st.error("Please provide an API Key in the left sidebar.")
+            st.error("Please enter your free Groq API key (starts with 'gsk_') in the left sidebar.")
         elif home_team == away_team:
             st.error("Home and Away teams must be different.")
         elif active_image_bytes is None:
-            st.error("Please paste or upload a 365Scores graphic first.")
+            st.error("Please paste or upload a new 365Scores graphic first.")
         else:
-            with st.spinner("Extracting match metrics..."):
+            with st.spinner("Extracting stats with Groq Vision..."):
                 try:
-                    # Normalise and compress image to clean JPEG
+                    # Clean and compress image to guaranteed standard JPEG
                     pil_img = Image.open(io.BytesIO(active_image_bytes))
                     if pil_img.mode in ("RGBA", "P"):
                         pil_img = pil_img.convert("RGB")
-                    pil_img.thumbnail((1200, 1200))
+                    pil_img.thumbnail((1000, 1000))
                     
                     img_buf = io.BytesIO()
-                    pil_img.save(img_buf, format="JPEG", quality=85)
-                    jpeg_bytes = img_buf.getvalue()
+                    pil_img.save(img_buf, format="JPEG", quality=80)
+                    b64_str = base64.b64encode(img_buf.getvalue()).decode("ascii")
 
-                    raw_json_text = ""
+                    prompt = """
+                    Extract the match stoppage statistics from this 365scores graphic into this exact JSON structure:
+                    {
+                        "actual_in_play": "MM:SS",
+                        "total_time": "MM:SS",
+                        "var_checks": "MM:SS",
+                        "game_stops": 0,
+                        "longest_in_play": "MM:SS",
+                        "announced_added": "MM:SS",
+                        "actual_added": "MM:SS",
+                        "played_added": "MM:SS",
+                        "home_goal_kicks": "MM:SS",
+                        "away_goal_kicks": "MM:SS",
+                        "home_free_kicks": "MM:SS",
+                        "away_free_kicks": "MM:SS",
+                        "home_throw_ins": "MM:SS",
+                        "away_throw_ins": "MM:SS",
+                        "home_corners": "MM:SS",
+                        "away_corners": "MM:SS",
+                        "home_other": "MM:SS",
+                        "away_other": "MM:SS",
+                        "home_total_wasted": "MM:SS",
+                        "away_total_wasted": "MM:SS"
+                    }
+                    Rules:
+                    - In 'Time Wasted On', the left column is the Home side, right column is the Away side.
+                    - 'game_stops' must be an integer.
+                    - Format all time durations as 'MM:SS' strings.
+                    - Return valid JSON only without markdown ticks or explanatory text.
+                    """
 
-                    if ai_engine == "Google Gemini (1,500/day free)":
-                        client = genai.Client(api_key=clean_key)
-                        response = client.models.generate_content(
-                            model="gemini-2.0-flash",
-                            contents=[
-                                types.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg"),
-                                PROMPT_TEXT
-                            ],
-                            config=types.GenerateContentConfig(
-                                response_mime_type="application/json"
-                            )
-                        )
-                        raw_json_text = response.text
-                    else:
-                        client = Groq(api_key=clean_key)
-                        b64_str = base64.b64encode(jpeg_bytes).decode("ascii")
-                        completion = client.chat.completions.create(
-                            model="llama-3.2-11b-vision-preview",
-                            messages=[{
-                                "role": "user",
-                                "content": [
-                                    {"type": "text", "text": PROMPT_TEXT},
-                                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_str}"}}
-                                ]
-                            }],
-                            temperature=0.1,
-                            response_format={"type": "json_object"}
-                        )
-                        raw_json_text = completion.choices[0].message.content
+                    client = Groq(api_key=clean_key)
+                    completion = client.chat.completions.create(
+                        model="llama-3.2-11b-vision-preview",
+                        messages=[{
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_str}"}}
+                            ]
+                        }],
+                        temperature=0.1,
+                        response_format={"type": "json_object"}
+                    )
 
-                    stats = json.loads(raw_json_text)
+                    raw_content = completion.choices[0].message.content
+                    stats = json.loads(raw_content)
 
+                    # Build entry with strict ASCII sanitisation
                     new_entry = {
                         "Gameweek": int(gw),
-                        "Home Team": str(home_team),
-                        "Away Team": str(away_team),
-                        "Actual In-Play": clean_val(stats.get("actual_in_play", "00:00")),
-                        "Total Match Time": clean_val(stats.get("total_time", "90:00")),
-                        "VAR Checks": clean_val(stats.get("var_checks", "00:00")),
+                        "Home Team": sanitize_text(home_team),
+                        "Away Team": sanitize_text(away_team),
+                        "Actual In-Play": sanitize_text(stats.get("actual_in_play", "00:00")),
+                        "Total Match Time": sanitize_text(stats.get("total_time", "90:00")),
+                        "VAR Checks": sanitize_text(stats.get("var_checks", "00:00")),
                         "Game Stops": int(stats.get("game_stops", 0)),
-                        "Longest In-Play": clean_val(stats.get("longest_in_play", "00:00")),
-                        "Announced Added": clean_val(stats.get("announced_added", "00:00")),
-                        "Actual Added": clean_val(stats.get("actual_added", "00:00")),
-                        "Played Added": clean_val(stats.get("played_added", "00:00")),
-                        "Home Goal Kicks": clean_val(stats.get("home_goal_kicks", "00:00")),
-                        "Away Goal Kicks": clean_val(stats.get("away_goal_kicks", "00:00")),
-                        "Home Free Kicks": clean_val(stats.get("home_free_kicks", "00:00")),
-                        "Away Free Kicks": clean_val(stats.get("away_free_kicks", "00:00")),
-                        "Home Throw Ins": clean_val(stats.get("home_throw_ins", "00:00")),
-                        "Away Throw Ins": clean_val(stats.get("away_throw_ins", "00:00")),
-                        "Home Corners": clean_val(stats.get("home_corners", "00:00")),
-                        "Away Corners": clean_val(stats.get("away_corners", "00:00")),
-                        "Home Other": clean_val(stats.get("home_other", "00:00")),
-                        "Away Other": clean_val(stats.get("away_other", "00:00")),
-                        "Home Total Wasted": clean_val(stats.get("home_total_wasted", "00:00")),
-                        "Away Total Wasted": clean_val(stats.get("away_total_wasted", "00:00"))
+                        "Longest In-Play": sanitize_text(stats.get("longest_in_play", "00:00")),
+                        "Announced Added": sanitize_text(stats.get("announced_added", "00:00")),
+                        "Actual Added": sanitize_text(stats.get("actual_added", "00:00")),
+                        "Played Added": sanitize_text(stats.get("played_added", "00:00")),
+                        "Home Goal Kicks": sanitize_text(stats.get("home_goal_kicks", "00:00")),
+                        "Away Goal Kicks": sanitize_text(stats.get("away_goal_kicks", "00:00")),
+                        "Home Free Kicks": sanitize_text(stats.get("home_free_kicks", "00:00")),
+                        "Away Free Kicks": sanitize_text(stats.get("away_free_kicks", "00:00")),
+                        "Home Throw Ins": sanitize_text(stats.get("home_throw_ins", "00:00")),
+                        "Away Throw Ins": sanitize_text(stats.get("away_throw_ins", "00:00")),
+                        "Home Corners": sanitize_text(stats.get("home_corners", "00:00")),
+                        "Away Corners": sanitize_text(stats.get("away_corners", "00:00")),
+                        "Home Other": sanitize_text(stats.get("home_other", "00:00")),
+                        "Away Other": sanitize_text(stats.get("away_other", "00:00")),
+                        "Home Total Wasted": sanitize_text(stats.get("home_total_wasted", "00:00")),
+                        "Away Total Wasted": sanitize_text(stats.get("away_total_wasted", "00:00"))
                     }
 
                     st.session_state.match_log = pd.concat(
@@ -293,7 +266,7 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
 
                 except Exception as err:
                     st.error(f"Error parsing graphic: {str(err)}")
-                    with st.expander("Show Diagnostic Details"):
+                    with st.expander("Diagnostic Traceback"):
                         st.code(traceback.format_exc())
 
 st.divider()
@@ -394,14 +367,14 @@ else:
             ax.spines['left'].set_color('#888888')
             ax.tick_params(colors='#ffffff', labelsize=11)
             ax.set_xlabel("Average Minutes Spent per Match", color="#ffffff", fontsize=11)
-            ax.set_title(f"{selected_team.upper()} — Dead-Ball Delay Profile", color="#ffffff", fontsize=15, weight="bold", pad=15)
+            ax.set_title(f"{selected_team.upper()} - Dead-Ball Delay Profile", color="#ffffff", fontsize=15, weight="bold", pad=15)
             fig.text(0.82, 0.02, "@EffectiveMins", color="#888888", fontsize=10, style='italic')
 
             st.pyplot(fig)
 
         with cg2:
             st.markdown("### Ready-to-Post Copy")
-            post_text = f"""⏱️ Stoppage Breakdown: {selected_team}
+            post_text = f"""Stoppage Breakdown: {selected_team}
 
 • Effective Playing Time: {t_row['Effective In-Play %']}% ({t_row['Avg In-Play']})
 • Average Time Lost: {t_row['Avg Total Wasted']} per 90
@@ -416,7 +389,7 @@ Data tracked by @EffectiveMins #PremierLeague #PL"""
 
     # --- TAB 2: LIVE SPREADSHEET EDITOR ---
     with tab2:
-        st.markdown("💡 **Tip:** Double-click any cell to edit numbers directly. Select rows using the checkboxes on the left and press `Delete` on your keyboard to remove specific fixtures.")
+        st.markdown("Double-click any cell to edit numbers directly. Select rows using the checkboxes on the left and hit Delete on your keyboard to remove specific fixtures.")
         
         edited_df = st.data_editor(
             st.session_state.match_log,
@@ -433,4 +406,4 @@ Data tracked by @EffectiveMins #PremierLeague #PL"""
 
         st.write("")
         csv_export = st.session_state.match_log.to_csv(index=False, encoding="utf-8").encode('utf-8')
-        st.download_button("📥 Download Full CSV Database", data=csv_export, file_name="effective_mins_database.csv", mime="text/csv")
+        st.download_button("Download Full CSV Database", data=csv_export, file_name="effective_mins_database.csv", mime="text/csv")
