@@ -262,12 +262,28 @@ with st.sidebar:
     st.write(f"Logged Fixtures: `{len(st.session_state.match_log)}`")
 
     with st.expander("⚠️ Danger Zone"):
-        if st.button("🗑️ Reset Entire Database", type="secondary"):
-            st.session_state.match_log = pd.DataFrame(columns=MATCH_COLUMNS)
-            if os.path.exists(DATA_FILE):
-                os.remove(DATA_FILE)
-            st.warning("All records cleared.")
-            st.rerun()
+        if "confirm_delete" not in st.session_state:
+            st.session_state.confirm_delete = False
+
+        if not st.session_state.confirm_delete:
+            if st.button("🗑️ Reset Entire Database", type="secondary", use_container_width=True):
+                st.session_state.confirm_delete = True
+                st.rerun()
+        else:
+            st.error("⚠️ Are you sure? This will permanently erase all saved fixtures.")
+            del_c1, del_c2 = st.columns(2)
+            with del_c1:
+                if st.button("Yes, Delete All", type="primary", use_container_width=True):
+                    st.session_state.match_log = pd.DataFrame(columns=MATCH_COLUMNS)
+                    if os.path.exists(DATA_FILE):
+                        os.remove(DATA_FILE)
+                    st.session_state.confirm_delete = False
+                    st.warning("All records cleared.")
+                    st.rerun()
+            with del_c2:
+                if st.button("Cancel", type="secondary", use_container_width=True):
+                    st.session_state.confirm_delete = False
+                    st.rerun()
 
     st.divider()
     st.markdown("**@EffectiveMins** Analytics Engine")
