@@ -4,10 +4,10 @@ import matplotlib.pyplot as plt
 import json
 import os
 import io
+import base64
 from PIL import Image
 from streamlit_paste_button import paste_image_button
-from google import genai
-from google.genai import types
+from groq import Groq
 
 st.set_page_config(page_title="EffectiveMins Tracker", layout="wide")
 
@@ -69,9 +69,9 @@ st.title("⏱️ EffectiveMins: Premier League Stoppage Tracker")
 # --- SIDEBAR: CONFIG & CONTROLS ---
 with st.sidebar:
     st.header("⚙️ Configuration")
-    secret_key = st.secrets.get("GEMINI_API_KEY", "")
-    api_key = st.text_input("Gemini API Key", value=secret_key, type="password")
-    st.caption("Obtain a free key at [Google AI Studio](https://aistudio.google.com/)")
+    secret_key = st.secrets.get("GROQ_API_KEY", "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")
+    api_key = st.text_input("Groq API Key (Free)", value=secret_key, type="password")
+    st.caption("Obtain a free key at [console.groq.com](https://console.groq.com/)")
     st.divider()
 
     st.header("🛠️ Database Admin")
@@ -102,7 +102,6 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
     upload_method = st.radio("Choose Input Mode:", ["📋 Paste Screenshot", "📁 Upload Image File"], horizontal=True)
 
     active_image_bytes = None
-    active_mime_type = "image/png"
 
     if upload_method == "📋 Paste Screenshot":
         paste_result = paste_image_button(
@@ -121,7 +120,6 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
         uploaded_img = st.file_uploader("Upload 365Scores Graphic", type=["png", "jpg", "jpeg", "webp"])
         if uploaded_img is not None:
             active_image_bytes = uploaded_img.getvalue()
-            active_mime_type = uploaded_img.type or "image/png"
             st.image(uploaded_img, caption="Uploaded Graphic Loaded", width=340)
 
     st.write("")
@@ -144,18 +142,19 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
 
     if extract_pressed:
         if not api_key:
-            st.error("Please enter your Gemini API key in the left sidebar.")
+            st.error("Please enter your free Groq API key in the left sidebar.")
         elif home_team == away_team:
             st.error("Home and Away teams must be different.")
         elif active_image_bytes is None:
             st.error("Please paste or upload a new 365Scores graphic first.")
         else:
-            with st.spinner("Extracting stats with Gemini 3.6 Flash..."):
+            with st.spinner("Extracting stats via Groq Free Vision..."):
                 try:
-                    client = genai.Client(api_key=api_key)
+                    client = Groq(api_key=api_key)
+                    base64_image = base64.b64encode(active_image_bytes).decode('utf-8')
 
                     prompt = """
-                    Extract the match stoppage statistics from this 365scores graphic into this JSON structure:
+                    Extract the match stoppage statistics from this 365scores graphic into this exact JSON structure:
                     {
                         "actual_in_play": "MM:SS",
                         "total_time": "MM:SS",
@@ -178,24 +177,27 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
                         "home_total_wasted": "MM:SS",
                         "away_total_wasted": "MM:SS"
                     }
-                    Important notes:
-                    - In the 'Time Wasted On' section, the left column corresponds to the Home side, and the right column corresponds to the Away side.
-                    - 'game_stops' must be an integer.
-                    - Format all time durations as 'MM:SS' strings (e.g., '01:13', '05:45', '57:29').
+                    Rules:
+                    - In 'Time Wasted On', left column is Home side, right column is Away side.
+                    - 'game_stops' is an integer.
+                    - Format all durations as 'MM:SS' strings.
+                    - Return pure JSON only. Do not include markdown ticks, intros, or explanations.
                     """
 
-                    response = client.models.generate_content(
-                        model="gemini-3.6-flash",
-                        contents=[
-                            types.Part.from_bytes(data=active_image_bytes, mime_type=active_mime_type),
-                            prompt
-                        ],
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json"
-                        )
+                    completion = client.chat.completions.create(
+                        model="llama-3.2-11b-vision-preview",
+                        messages=[{
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
+                            ]
+                        }],
+                        temperature=0.1,
+                        response_format={"type": "json_object"}
                     )
 
-                    stats = json.loads(response.text)
+                    stats = json.loads(completion.choices[0].message.content)
 
                     new_entry = {
                         "Gameweek": int(gw),
