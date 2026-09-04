@@ -3,6 +3,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import json
 import os
+import io
+from PIL import Image
+from streamlit_paste_button import paste_image_button
 from google import genai
 from google.genai import types
 
@@ -71,7 +74,7 @@ with st.sidebar:
     st.divider()
     st.markdown("**@EffectiveMins** Stoppage Analytics")
 
-# --- HYBRID INGESTION (DROPDOWNS + SCREENSHOT) ---
+# --- MATCH INGESTION SECTION ---
 with st.expander("📸 Scan New Match Breakdown", expanded=True):
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -79,24 +82,51 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
     with col2:
         home_team = st.selectbox("Home Team", PL_TEAMS, index=0)
     with col3:
-        # Default away team to the second item in the list
         away_team = st.selectbox("Away Team", PL_TEAMS, index=1)
 
-    uploaded_img = st.file_uploader("Upload 365Scores Stoppage Graphic", type=["png", "jpg", "jpeg", "webp"])
+    st.markdown("### Image Input")
+    input_c1, input_c2 = st.columns([1, 1])
 
+    with input_c1:
+        st.markdown("**Option 1: Paste from Clipboard**")
+        paste_result = paste_image_button(
+            label="📋 Click to Paste Screenshot",
+            text_color="#ffffff",
+            background_color="#007acc",
+            hover_background_color="#005999",
+            errors="raise"
+        )
+
+    with input_c2:
+        st.markdown("**Option 2: Upload File**")
+        uploaded_img = st.file_uploader("Upload 365Scores Graphic", type=["png", "jpg", "jpeg", "webp"], label_visibility="collapsed")
+
+    # Resolve image source
+    active_image_bytes = None
+    active_mime_type = "image/png"
+
+    if paste_result.image_data is not None:
+        buf = io.BytesIO()
+        paste_result.image_data.save(buf, format="PNG")
+        active_image_bytes = buf.getvalue()
+        st.image(paste_result.image_data, caption="Clipboard Image Loaded", width=340)
+    elif uploaded_img is not None:
+        active_image_bytes = uploaded_img.getvalue()
+        active_mime_type = uploaded_img.type or "image/png"
+        st.image(uploaded_img, caption="Uploaded File Loaded", width=340)
+
+    st.write("")
     if st.button("🚀 Extract & Save Match Record", type="primary"):
         if not api_key:
-            st.error("Please provide a Gemini API key in the sidebar.")
+            st.error("Please enter your Gemini API key in the left sidebar.")
         elif home_team == away_team:
             st.error("Home and Away teams must be different.")
-        elif uploaded_img is None:
-            st.error("Please upload a 365Scores screenshot first.")
+        elif active_image_bytes is None:
+            st.error("Please paste or upload a 365Scores graphic first.")
         else:
             with st.spinner("Scanning 365Scores stoppage metrics..."):
                 try:
                     client = genai.Client(api_key=api_key)
-                    image_bytes = uploaded_img.getvalue()
-                    mime_type = uploaded_img.type or "image/png"
 
                     prompt = """
                     Extract the match stoppage statistics from this 365scores graphic into this JSON structure:
@@ -131,7 +161,7 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
                     response = client.models.generate_content(
                         model="gemini-2.5-flash",
                         contents=[
-                            types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                            types.Part.from_bytes(data=active_image_bytes, mime_type=active_mime_type),
                             prompt
                         ],
                         config=types.GenerateContentConfig(
@@ -176,20 +206,19 @@ with st.expander("📸 Scan New Match Breakdown", expanded=True):
                     st.rerun()
 
                 except Exception as e:
-                    st.error(f"Error parsing screenshot: {str(e)}")
+                    st.error(f"Error parsing graphic: {str(e)}")
 
 st.divider()
 
 # --- STANDINGS & VISUAL ANALYTICS ---
 if st.session_state.match_log.empty:
-    st.info("No fixture data recorded yet. Upload your first 365Scores graphic above.")
+    st.info("No fixture data recorded yet. Paste or upload your first 365Scores graphic above.")
 else:
     tab1, tab2 = st.tabs(["🏆 Team Standings (Averages)", "📋 Full Database & Export"])
 
     with tab1:
         team_rows = []
         for _, r in st.session_state.match_log.iterrows():
-            # Home side entry
             team_rows.append({
                 "Team": r["Home Team"],
                 "InPlay_Sec": time_to_seconds(r["Actual In-Play"]),
@@ -201,7 +230,6 @@ else:
                 "Other_Sec": time_to_seconds(r["Home Other"]),
                 "TotalWasted_Sec": time_to_seconds(r["Home Total Wasted"])
             })
-            # Away side entry
             team_rows.append({
                 "Team": r["Away Team"],
                 "InPlay_Sec": time_to_seconds(r["Actual In-Play"]),
@@ -228,7 +256,7 @@ else:
         standings["Avg Corners Delay"] = standings["Corners_Sec"].apply(seconds_to_time)
         standings["Avg Other Delay"] = standings["Other_Sec"].apply(seconds_to_time)
 
-        # Dynamic Sorting
+        # Sorting selection
         sort_mode = st.selectbox(
             "Sort Standings By:",
             [
