@@ -1,8 +1,4 @@
 streamlit
 pandas
 matplotlib
-pillow
-streamlit-paste-button
-google-genai
-openai
-requests
+openpyxl
