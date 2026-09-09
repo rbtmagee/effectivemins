@@ -19,17 +19,9 @@ st.markdown("""
 
 DATA_FILE = "effective_mins_data.csv"
 
-# 2026/27 Premier League Teams
-PL_TEAMS = sorted([
-    "Arsenal", "Aston Villa", "Bournemouth", "Brentford", "Brighton",
-    "Chelsea", "Coventry City", "Crystal Palace", "Everton", "Fulham",
-    "Hull City", "Ipswich Town", "Leeds United", "Liverpool",
-    "Manchester City", "Manchester United", "Newcastle United",
-    "Nottingham Forest", "Sunderland", "Tottenham"
-])
-
-# Official Premier League CDN Badges
+# Comprehensive Domestic & European Club Badge CDN Library
 CLUB_BADGES = {
+    # Premier League
     "Arsenal": "https://resources.premierleague.com/premierleague/badges/t3.png",
     "Aston Villa": "https://resources.premierleague.com/premierleague/badges/t7.png",
     "Bournemouth": "https://resources.premierleague.com/premierleague/badges/t91.png",
@@ -49,10 +41,34 @@ CLUB_BADGES = {
     "Newcastle United": "https://resources.premierleague.com/premierleague/badges/t4.png",
     "Nottingham Forest": "https://resources.premierleague.com/premierleague/badges/t17.png",
     "Sunderland": "https://resources.premierleague.com/premierleague/badges/t56.png",
-    "Tottenham": "https://resources.premierleague.com/premierleague/badges/t6.png"
+    "Tottenham": "https://resources.premierleague.com/premierleague/badges/t6.png",
+
+    # UEFA Champions League Contenders
+    "Real Madrid": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/131",
+    "Barcelona": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/133",
+    "Bayern Munich": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/156",
+    "Paris Saint-Germain": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/164",
+    "Borussia Dortmund": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/157",
+    "Bayer Leverkusen": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/154",
+    "RB Leipzig": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/6321",
+    "Inter Milan": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/118",
+    "AC Milan": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/121",
+    "Juventus": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/128",
+    "Atalanta": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/119",
+    "Atletico Madrid": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/132",
+    "Sporting CP": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/549",
+    "Benfica": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/550",
+    "Porto": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/551",
+    "PSV Eindhoven": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/541",
+    "Feyenoord": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/540",
+    "Celtic": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/570",
+    "Monaco": "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/166"
 }
 
+ALL_KNOWN_TEAMS = sorted(list(CLUB_BADGES.keys()))
+
 CLUB_PATTERNS = [
+    # Premier League
     ("Nottingham Forest", ["nottingham forest", "nottingham", "nott'm forest", "forest"]),
     ("Manchester United", ["manchester united", "manchester utd", "man utd", "man united"]),
     ("Manchester City", ["manchester city", "man city"]),
@@ -72,11 +88,32 @@ CLUB_PATTERNS = [
     ("Everton", ["everton"]),
     ("Fulham", ["fulham"]),
     ("Liverpool", ["liverpool"]),
-    ("Sunderland", ["sunderland"])
+    ("Sunderland", ["sunderland"]),
+
+    # Champions League Contenders
+    ("Real Madrid", ["real madrid", "madrid"]),
+    ("Barcelona", ["barcelona", "barca"]),
+    ("Bayern Munich", ["bayern munich", "bayern münchen", "bayern"]),
+    ("Paris Saint-Germain", ["paris saint-germain", "paris saint germain", "psg", "paris sg"]),
+    ("Borussia Dortmund", ["borussia dortmund", "dortmund", "bvb"]),
+    ("Bayer Leverkusen", ["bayer leverkusen", "leverkusen"]),
+    ("RB Leipzig", ["rb leipzig", "leipzig"]),
+    ("Inter Milan", ["inter milan", "internazionale", "inter"]),
+    ("AC Milan", ["ac milan", "milan"]),
+    ("Juventus", ["juventus", "juve"]),
+    ("Atalanta", ["atalanta"]),
+    ("Atletico Madrid", ["atletico madrid", "atlético madrid", "atletico"]),
+    ("Sporting CP", ["sporting cp", "sporting lisbon", "sporting"]),
+    ("Benfica", ["benfica", "sl benfica"]),
+    ("Porto", ["fc porto", "porto"]),
+    ("PSV Eindhoven", ["psv eindhoven", "psv"]),
+    ("Feyenoord", ["feyenoord"]),
+    ("Celtic", ["celtic"]),
+    ("Monaco", ["as monaco", "monaco"])
 ]
 
 MATCH_COLUMNS = [
-    "Gameweek", "Home Team", "Away Team",
+    "Competition", "Gameweek", "Home Team", "Away Team",
     "Actual In-Play", "Total Match Time", "VAR Checks", "Game Stops", "Longest In-Play",
     "Announced Added", "Actual Added", "Played Added",
     "Home Goal Kicks", "Away Goal Kicks",
@@ -120,6 +157,13 @@ def clean_html_to_text(html_str: str) -> str:
     clean = re.sub(r'\n\s*\n+', '\n\n', clean)
     return clean
 
+def detect_competition(filename: str, text: str) -> str:
+    """Detects whether a fixture belongs to Champions League or Premier League."""
+    combined = f"{filename} {text}".lower()
+    if any(marker in combined for marker in ["champions league", "champions-league", "ucl", "uefa champions"]):
+        return "Champions League"
+    return "Premier League"
+
 def detect_clubs(filename: str, text: str):
     fn_lower = filename.lower()
     found_in_fn = []
@@ -161,13 +205,17 @@ def parse_match_data(filename: str, raw_content: str) -> dict:
     text = clean_html_to_text(raw_content) if ("<html" in raw_content.lower() or "<body" in raw_content.lower()) else raw_content
     stats = {}
 
+    stats["Competition"] = detect_competition(filename, text)
+
     home_team, away_team = detect_clubs(filename, text)
     stats["Home Team"] = home_team
     stats["Away Team"] = away_team
 
-    gw_m = re.search(r"Premier\s+League,?\s+Round\s+(\d+)", text, re.IGNORECASE)
+    gw_m = re.search(r"(?:Premier\s+League|Champions\s+League),?\s+(?:Round|Matchday|MD)\s+(\d+)", text, re.IGNORECASE)
     if not gw_m:
-        gw_m = re.search(r"(?:Round|GW|Gameweek)\s*(\d+)", filename, re.IGNORECASE)
+        gw_m = re.search(r"(?:Round|Matchday|MD|GW|Gameweek)\s*(\d+)", filename, re.IGNORECASE)
+    if not gw_m:
+        gw_m = re.search(r"(?:Round|Matchday)\s+(\d+)", text, re.IGNORECASE)
     stats["Gameweek"] = int(gw_m.group(1)) if gw_m else 1
 
     play_section = text
@@ -223,7 +271,7 @@ def parse_match_data(filename: str, raw_content: str) -> dict:
     stats["_is_valid"] = not (stats["Actual In-Play"] == "00:00" and stats["Home Total Wasted"] == "00:00")
     return stats
 
-# --- DATABASE LOAD ---
+# --- DATABASE LOAD WITH SCHEMA NORMALISATION ---
 if os.path.exists(DATA_FILE):
     try:
         st.session_state.match_log = pd.read_csv(DATA_FILE, encoding="utf-8")
@@ -232,14 +280,26 @@ if os.path.exists(DATA_FILE):
 else:
     st.session_state.match_log = pd.DataFrame(columns=MATCH_COLUMNS)
 
+# Ensure 'Competition' exists for backward compatibility
+if "Competition" not in st.session_state.match_log.columns:
+    st.session_state.match_log.insert(0, "Competition", "Premier League")
+
 for col in MATCH_COLUMNS:
     if col not in st.session_state.match_log.columns:
         st.session_state.match_log[col] = "00:00" if "Time" in col or "In-Play" in col or "Added" in col or "Wasted" in col else 0
 
-st.title("⏱️ EffectiveMins: Premier League Stoppage Tracker")
+st.title("⏱️ EffectiveMins: Football Stoppage Tracker")
 
-# --- SIDEBAR: EXCEL MASTER SYNC ---
+# --- SIDEBAR: COMPETITION FILTER & SPREADSHEET SYNC ---
 with st.sidebar:
+    st.header("🏆 Competition View")
+    active_competition = st.radio(
+        "Active Dashboard:",
+        ["Premier League", "Champions League", "All Competitions"],
+        index=0
+    )
+
+    st.divider()
     st.header("📂 Master Spreadsheet Sync")
     st.caption("Upload your master Excel (.xlsx) or CSV file to update all records instantly.")
 
@@ -250,6 +310,9 @@ with st.sidebar:
                 df_imported = pd.read_excel(uploaded_master)
             else:
                 df_imported = pd.read_csv(uploaded_master)
+
+            if "Competition" not in df_imported.columns:
+                df_imported.insert(0, "Competition", "Premier League")
 
             for col in MATCH_COLUMNS:
                 if col not in df_imported.columns:
@@ -278,7 +341,7 @@ with st.sidebar:
 
     st.divider()
     st.header("🛠️ Database Admin")
-    st.write(f"Logged Fixtures: `{len(st.session_state.match_log)}`")
+    st.write(f"Total Logged Fixtures: `{len(st.session_state.match_log)}`")
 
     with st.expander("⚠️ Danger Zone"):
         if "confirm_delete" not in st.session_state:
@@ -313,8 +376,8 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
 
     with ingest_tab1:
         st.markdown("""
-        Drag and drop your saved match files.
-        > **Firefox Tip:** Save reports using **Save as type: Text Files (*.txt)** so stoppage numbers are included.
+        Drag and drop your saved 365Scores match files.
+        > **Automatic Competition Engine:** The parser automatically reads whether a report is **Premier League** or **Champions League**.
         """)
 
         uploaded_files = st.file_uploader(
@@ -344,7 +407,7 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
             st.write("---")
             st.markdown(f"##### 🔍 Staged Matches ({len(df_preview)} Detected)")
 
-            preview_cols = ["Status", "Gameweek", "Home Team", "Away Team", "Actual In-Play", "Total Match Time", "Home Total Wasted", "Away Total Wasted"]
+            preview_cols = ["Status", "Competition", "Gameweek", "Home Team", "Away Team", "Actual In-Play", "Total Match Time", "Home Total Wasted", "Away Total Wasted"]
             st.dataframe(df_preview[preview_cols], use_container_width=True, hide_index=True)
 
             valid_matches = [m for m in parsed_batch if m["_is_valid"]]
@@ -382,6 +445,7 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
                     clean_entry["Game Stops"] = int(clean_entry["Game Stops"])
 
                     existing_mask = (
+                        (st.session_state.match_log["Competition"] == clean_entry["Competition"]) &
                         (st.session_state.match_log["Gameweek"] == clean_entry["Gameweek"]) &
                         (st.session_state.match_log["Home Team"] == clean_entry["Home Team"]) &
                         (st.session_state.match_log["Away Team"] == clean_entry["Away Team"])
@@ -404,13 +468,15 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
     # TAB 2: MANUAL ENTRY FORM
     with ingest_tab2:
         with st.form("manual_entry_form", clear_on_submit=True):
-            mc1, mc2, mc3 = st.columns(3)
+            mc0, mc1, mc2, mc3 = st.columns(4)
+            with mc0:
+                man_comp = st.selectbox("Competition", ["Premier League", "Champions League"])
             with mc1:
-                man_gw = st.number_input("Gameweek", min_value=1, max_value=38, value=1, step=1)
+                man_gw = st.number_input("Round / Matchday", min_value=1, max_value=38, value=1, step=1)
             with mc2:
-                man_home = st.selectbox("Home Team", PL_TEAMS, index=0)
+                man_home = st.selectbox("Home Team", ALL_KNOWN_TEAMS, index=0)
             with mc3:
-                man_away = st.selectbox("Away Team", PL_TEAMS, index=1)
+                man_away = st.selectbox("Away Team", ALL_KNOWN_TEAMS, index=1)
 
             st.markdown("##### Match In-Play & Flow")
             m1, m2, m3, m4, m5 = st.columns(5)
@@ -463,6 +529,7 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
 
             if st.form_submit_button("Save Record Manually", type="primary"):
                 manual_row = {
+                    "Competition": man_comp,
                     "Gameweek": int(man_gw),
                     "Home Team": man_home,
                     "Away Team": man_away,
@@ -489,17 +556,23 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
                 }
                 st.session_state.match_log = pd.concat([st.session_state.match_log, pd.DataFrame([manual_row])], ignore_index=True)
                 st.session_state.match_log.to_csv(DATA_FILE, index=False, encoding="utf-8")
-                st.success(f"Recorded {man_home} vs {man_away} manually!")
+                st.success(f"Recorded {man_home} vs {man_away} ({man_comp}) manually!")
                 st.rerun()
 
 st.divider()
 
+# --- FILTER DATA BY SELECTED COMPETITION ---
+if active_competition == "All Competitions":
+    active_df = st.session_state.match_log.copy()
+else:
+    active_df = st.session_state.match_log[st.session_state.match_log["Competition"] == active_competition].copy()
+
 # --- STANDINGS & VISUAL ANALYTICS ---
-if st.session_state.match_log.empty:
-    st.info("No fixtures recorded yet. Upload match files above to populate the league table.")
+if active_df.empty:
+    st.info(f"No fixtures recorded for **{active_competition}** yet. Upload match files above to populate.")
 else:
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "🏆 Team Standings (Averages)",
+        f"🏆 {active_competition} Standings",
         "🌊 Flow & Fragmentation",
         "⏱️ Added Time Integrity",
         "📺 VAR Stoppage Impact",
@@ -507,15 +580,15 @@ else:
     ])
 
     # ==========================
-    # TAB 1: MAIN LEAGUE TABLE
+    # TAB 1: MAIN STANDINGS
     # ==========================
     with tab1:
-        unique_logged_teams = sorted(set(st.session_state.match_log["Home Team"]).union(set(st.session_state.match_log["Away Team"])))
+        unique_logged_teams = sorted(set(active_df["Home Team"]).union(set(active_df["Away Team"])))
         standings_rows = []
 
         for team in unique_logged_teams:
-            h_matches = st.session_state.match_log[st.session_state.match_log["Home Team"] == team]
-            a_matches = st.session_state.match_log[st.session_state.match_log["Away Team"] == team]
+            h_matches = active_df[active_df["Home Team"] == team]
+            a_matches = active_df[active_df["Away Team"] == team]
 
             h_count = len(h_matches)
             a_count = len(a_matches)
@@ -550,7 +623,7 @@ else:
 
             standings_rows.append({
                 "Team": team,
-                "Badge": CLUB_BADGES.get(team, ""),
+                "Badge": CLUB_BADGES.get(team, "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/default"),
                 "Matches": total_matches,
                 "Home_Matches": h_count,
                 "Away_Matches": a_count,
@@ -628,8 +701,8 @@ else:
                 "Select Graphic Type:",
                 [
                     "Dead-Ball Delay Profile (Bar Chart)",
-                    "In-Play Trend Across Gameweeks (Line Chart)",
-                    "Time Wasting Trend Across Gameweeks (Line Chart)"
+                    "In-Play Trend Across Rounds (Line Chart)",
+                    "Time Wasting Trend Across Rounds (Line Chart)"
                 ],
                 horizontal=False
             )
@@ -639,9 +712,9 @@ else:
 
         cg1, cg2 = st.columns([1.3, 1])
 
-        team_fixtures = st.session_state.match_log[
-            (st.session_state.match_log["Home Team"] == selected_team) |
-            (st.session_state.match_log["Away Team"] == selected_team)
+        team_fixtures = active_df[
+            (active_df["Home Team"] == selected_team) |
+            (active_df["Away Team"] == selected_team)
         ].copy()
         team_fixtures = team_fixtures.sort_values(by="Gameweek").reset_index(drop=True)
 
@@ -666,7 +739,7 @@ else:
                 ax.spines['left'].set_color('#888888')
                 ax.tick_params(colors='#ffffff', labelsize=11)
                 ax.set_xlabel("Average Minutes Spent per Match", color="#ffffff", fontsize=11)
-                ax.set_title(f"{selected_team.upper()} — Dead-Ball Delay Profile", color="#ffffff", fontsize=15, weight="bold", pad=15)
+                ax.set_title(f"{selected_team.upper()} — Dead-Ball Delay Profile ({active_competition})", color="#ffffff", fontsize=15, weight="bold", pad=15)
                 fig.text(0.82, 0.02, "@EffectiveMins", color="#888888", fontsize=10, style='italic')
 
                 st.pyplot(fig)
@@ -675,7 +748,8 @@ else:
                 if badge_url:
                     st.image(badge_url, width=70)
                 st.markdown("### Ready-to-Post Copy")
-                post_text = f"""⏱️ Stoppage Breakdown: {selected_team}
+                comp_tag = "#UCL" if "Champions" in active_competition else "#PremierLeague #PL"
+                post_text = f"""⏱️ Stoppage Breakdown: {selected_team} ({active_competition})
 
 • Effective Playing Time: {t_row['Effective In-Play %']}% ({t_row['Avg In-Play']})
 • Average Time Lost: {t_row['Avg Total Wasted']} per 90
@@ -686,10 +760,10 @@ Biggest delay factors:
 2. Goal Kicks: {t_row['Avg Goal Kicks Delay']}
 3. Throw Ins: {t_row['Avg Throw Ins Delay']}
 
-Data tracked by @EffectiveMins #PremierLeague #PL"""
+Data tracked by @EffectiveMins {comp_tag}"""
                 st.text_area("Draft Post", value=post_text, height=200)
 
-        elif chart_type == "In-Play Trend Across Gameweeks (Line Chart)":
+        elif chart_type == "In-Play Trend Across Rounds (Line Chart)":
             with cg1:
                 fig, ax = plt.subplots(figsize=(10, 5.5), facecolor="#0e1621")
                 ax.set_facecolor("#0e1621")
@@ -702,7 +776,8 @@ Data tracked by @EffectiveMins #PremierLeague #PL"""
                     is_home = (match["Home Team"] == selected_team)
                     opp = match["Away Team"] if is_home else match["Home Team"]
                     venue = "H" if is_home else "A"
-                    x_labels.append(f"GW{match['Gameweek']}\nvs {opp[:3].upper()} ({venue})")
+                    label_prefix = "MD" if "Champions" in match["Competition"] else "GW"
+                    x_labels.append(f"{label_prefix}{match['Gameweek']}\nvs {opp[:3].upper()} ({venue})")
                     inplay_secs = time_to_seconds(match["Actual In-Play"])
                     y_vals.append(inplay_secs / 60.0)
                     time_strings.append(match["Actual In-Play"])
@@ -730,7 +805,7 @@ Data tracked by @EffectiveMins #PremierLeague #PL"""
                 ax.spines['bottom'].set_color('#888888')
                 ax.spines['left'].set_color('#888888')
                 ax.set_ylabel("In-Play Minutes", color="#ffffff", fontsize=11)
-                ax.set_title(f"{selected_team.upper()} — In-Play Fluctuations by Gameweek", color="#ffffff", fontsize=15, weight="bold", pad=15)
+                ax.set_title(f"{selected_team.upper()} — In-Play Fluctuations ({active_competition})", color="#ffffff", fontsize=15, weight="bold", pad=15)
                 ax.grid(color="#ffffff", alpha=0.08, linestyle=":")
                 ax.legend(loc="lower right", facecolor="#151e22", edgecolor="#3a4145", labelcolor="#ffffff")
                 fig.text(0.82, 0.02, "@EffectiveMins", color="#888888", fontsize=10, style='italic')
@@ -750,20 +825,22 @@ Data tracked by @EffectiveMins #PremierLeague #PL"""
                     is_home = (match["Home Team"] == selected_team)
                     opp = match["Away Team"] if is_home else match["Home Team"]
                     loc = "H" if is_home else "A"
-                    breakdown_lines.append(f"• GW{match['Gameweek']} vs {opp} ({loc}): {match['Actual In-Play']}")
+                    label_prefix = "MD" if "Champions" in match["Competition"] else "GW"
+                    breakdown_lines.append(f"• {label_prefix}{match['Gameweek']} vs {opp} ({loc}): {match['Actual In-Play']}")
 
                 formatted_breakdown = "\n".join(breakdown_lines)
+                comp_tag = "#UCL" if "Champions" in active_competition else "#PremierLeague #PL"
 
-                trend_post = f"""📈 Effective Playing Time Trend: {selected_team}
+                trend_post = f"""📈 Effective Playing Time Trend: {selected_team} ({active_competition})
 
-Game-by-game breakdown:
+Round-by-round breakdown:
 {formatted_breakdown}
 
-• Season Average: {t_row['Avg In-Play']} ({t_row['Effective In-Play %']}% of 90)
+• Average: {t_row['Avg In-Play']} ({t_row['Effective In-Play %']}% of 90)
 • High: {seconds_to_time(max(time_to_seconds(m['Actual In-Play']) for _, m in team_fixtures.iterrows()))}
 • Low: {seconds_to_time(min(time_to_seconds(m['Actual In-Play']) for _, m in team_fixtures.iterrows()))}
 
-Follow @EffectiveMins for full Premier League stoppage metrics #PL #{selected_team.replace(' ', '')}"""
+Follow @EffectiveMins for full stoppage analytics {comp_tag} #{selected_team.replace(' ', '')}"""
                 st.text_area("Draft Trend Post", value=trend_post, height=230)
 
         else:
@@ -779,7 +856,8 @@ Follow @EffectiveMins for full Premier League stoppage metrics #PL #{selected_te
                     is_home = (match["Home Team"] == selected_team)
                     opp = match["Away Team"] if is_home else match["Home Team"]
                     venue = "H" if is_home else "A"
-                    x_labels.append(f"GW{match['Gameweek']}\nvs {opp[:3].upper()} ({venue})")
+                    label_prefix = "MD" if "Champions" in match["Competition"] else "GW"
+                    x_labels.append(f"{label_prefix}{match['Gameweek']}\nvs {opp[:3].upper()} ({venue})")
 
                     waste_col = "Home Total Wasted" if is_home else "Away Total Wasted"
                     waste_secs = time_to_seconds(match[waste_col])
@@ -808,7 +886,7 @@ Follow @EffectiveMins for full Premier League stoppage metrics #PL #{selected_te
                 ax.spines['bottom'].set_color('#888888')
                 ax.spines['left'].set_color('#888888')
                 ax.set_ylabel("Minutes Wasted / Delayed", color="#ffffff", fontsize=11)
-                ax.set_title(f"{selected_team.upper()} — Dead-Ball Time Wasted by Gameweek", color="#ffffff", fontsize=15, weight="bold", pad=15)
+                ax.set_title(f"{selected_team.upper()} — Dead-Ball Delay ({active_competition})", color="#ffffff", fontsize=15, weight="bold", pad=15)
                 ax.grid(color="#ffffff", alpha=0.08, linestyle=":")
                 fig.text(0.82, 0.02, "@EffectiveMins", color="#888888", fontsize=10, style='italic')
 
@@ -828,30 +906,32 @@ Follow @EffectiveMins for full Premier League stoppage metrics #PL #{selected_te
                     opp = match["Away Team"] if is_home else match["Home Team"]
                     loc = "H" if is_home else "A"
                     w_col = "Home Total Wasted" if is_home else "Away Total Wasted"
-                    waste_breakdown.append(f"• GW{match['Gameweek']} vs {opp} ({loc}): {match[w_col]}")
+                    label_prefix = "MD" if "Champions" in match["Competition"] else "GW"
+                    waste_breakdown.append(f"• {label_prefix}{match['Gameweek']} vs {opp} ({loc}): {match[w_col]}")
 
                 formatted_waste = "\n".join(waste_breakdown)
+                comp_tag = "#UCL" if "Champions" in active_competition else "#PremierLeague #PL"
 
-                waste_post = f"""⏱️ Dead-Ball Time Wasted Trend: {selected_team}
+                waste_post = f"""⏱️ Dead-Ball Time Wasted: {selected_team} ({active_competition})
 
-Game-by-game stoppage delay:
+Round-by-round stoppage delay:
 {formatted_waste}
 
-• Season Average Lost: {t_row['Avg Total Wasted']} per match
+• Average Lost: {t_row['Avg Total Wasted']} per match
 • Home Delay Avg: {t_row['Avg Home Wasted']} | Away Delay Avg: {t_row['Avg Away Wasted']}
-• Most Time Wasted: {seconds_to_time(max(time_to_seconds(m['Home Total Wasted' if m['Home Team'] == selected_team else 'Away Total Wasted']) for _, m in team_fixtures.iterrows()))}
+• Most Wasted: {seconds_to_time(max(time_to_seconds(m['Home Total Wasted' if m['Home Team'] == selected_team else 'Away Total Wasted']) for _, m in team_fixtures.iterrows()))}
 
-Full breakdown tracked by @EffectiveMins #PremierLeague #PL #{selected_team.replace(' ', '')}"""
+Full stoppage stats tracked by @EffectiveMins {comp_tag} #{selected_team.replace(' ', '')}"""
                 st.text_area("Draft Waste Trend Post", value=waste_post, height=230)
 
     # ==========================================
-    # TAB 2: FLOW & FRAGMENTATION ANALYSIS
+    # TAB 2: FLOW & FRAGMENTATION
     # ==========================================
     with tab2:
-        st.subheader("🌊 Match Rhythm & Whistle Disruptions")
+        st.subheader(f"🌊 {active_competition} Rhythm & Whistle Disruptions")
         st.caption("Measuring game disruption, whistle frequency, and continuous play streaks.")
 
-        df_flow = st.session_state.match_log.copy()
+        df_flow = active_df.copy()
         df_flow["InPlay_Sec"] = df_flow["Actual In-Play"].apply(time_to_seconds)
         df_flow["Total_Sec"] = df_flow["Total Match Time"].apply(time_to_seconds)
         df_flow["Longest_Sec"] = df_flow["Longest In-Play"].apply(time_to_seconds)
@@ -864,24 +944,24 @@ Full breakdown tracked by @EffectiveMins #PremierLeague #PL #{selected_team.repl
         with fl_c1:
             st.metric("Avg Stops per Fixture", round(df_flow["Stops"].mean(), 1))
         with fl_c2:
-            st.metric("League Pace (Whistle Every)", f"{round(df_flow['Seconds Per Whistle'].mean(), 1)}s")
+            st.metric("Competition Pace", f"Whistle every {round(df_flow['Seconds Per Whistle'].mean(), 1)}s")
         with fl_c3:
             longest_run = df_flow.sort_values(by="Longest_Sec", ascending=False).iloc[0]
-            st.metric("Longest Continuous Play", f"{longest_run['Longest In-Play']}", f"GW{longest_run['Gameweek']}")
+            st.metric("Longest Continuous Play", f"{longest_run['Longest In-Play']}", f"Round {longest_run['Gameweek']}")
         with fl_c4:
             most_stops = df_flow.sort_values(by="Stops", ascending=False).iloc[0]
-            st.metric("Most Fragmented Fixture", f"{most_stops['Stops']} Stops", f"GW{most_stops['Gameweek']}")
+            st.metric("Most Fragmented Match", f"{most_stops['Stops']} Stops", f"Round {most_stops['Gameweek']}")
 
         st.divider()
 
-        st.markdown("##### 🏆 Club Stoppages Leaderboard (Cumulative & Averages)")
+        st.markdown(f"##### 🏆 Club Stoppages Leaderboard ({active_competition})")
         st.caption("Which clubs generate and experience the most interrupted, whistle-heavy matches?")
 
         club_stop_rows = []
         for team in unique_logged_teams:
-            t_matches = st.session_state.match_log[
-                (st.session_state.match_log["Home Team"] == team) |
-                (st.session_state.match_log["Away Team"] == team)
+            t_matches = active_df[
+                (active_df["Home Team"] == team) |
+                (active_df["Away Team"] == team)
             ].copy()
             t_count = len(t_matches)
             if t_count == 0:
@@ -897,7 +977,7 @@ Full breakdown tracked by @EffectiveMins #PremierLeague #PL #{selected_team.repl
             sec_per_whistle = round(total_match_sec / total_stops, 1) if total_stops > 0 else 0
 
             club_stop_rows.append({
-                "Badge": CLUB_BADGES.get(team, ""),
+                "Badge": CLUB_BADGES.get(team, "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/default"),
                 "Team": team,
                 "Matches": t_count,
                 "Cumulative Stops": total_stops,
@@ -955,13 +1035,13 @@ Full breakdown tracked by @EffectiveMins #PremierLeague #PL #{selected_team.repl
             st.dataframe(smooth_view, use_container_width=True, hide_index=True)
 
     # ==========================================
-    # TAB 3: ADDED TIME INTEGRITY ANALYSIS
+    # TAB 3: ADDED TIME INTEGRITY
     # ==========================================
     with tab3:
-        st.subheader("⏱️ Added Time Integrity & Extra-Time Leakage")
+        st.subheader(f"⏱️ {active_competition} Added Time Integrity")
         st.caption("Tracking how much extra time was announced, how long matches actually ran, and actual ball-in-play during stoppage.")
 
-        df_at = st.session_state.match_log.copy()
+        df_at = active_df.copy()
         df_at["Ann_Sec"] = df_at["Announced Added"].apply(time_to_seconds)
         df_at["Act_Sec"] = df_at["Actual Added"].apply(time_to_seconds)
         df_at["Ply_Sec"] = df_at["Played Added"].apply(time_to_seconds)
@@ -998,11 +1078,11 @@ Full breakdown tracked by @EffectiveMins #PremierLeague #PL #{selected_team.repl
     # TAB 4: VAR REVIEW IMPACT
     # ==========================================
     with tab4:
-        st.subheader("📺 Premier League VAR Review Impact")
+        st.subheader(f"📺 {active_competition} VAR Review Impact")
         st.caption("Tracking how video reviews affect stoppage time, flow, and total dead time per club.")
 
         var_rows = []
-        for _, r in st.session_state.match_log.iterrows():
+        for _, r in active_df.iterrows():
             var_s = time_to_seconds(r["VAR Checks"])
             tot_s = time_to_seconds(r["Total Match Time"])
             has_var = 1 if var_s > 0 else 0
@@ -1024,13 +1104,13 @@ Full breakdown tracked by @EffectiveMins #PremierLeague #PL #{selected_team.repl
 
         df_var_calc = pd.DataFrame(var_rows)
 
-        total_league_var_sec = st.session_state.match_log["VAR Checks"].apply(time_to_seconds).sum()
-        matches_with_var = (st.session_state.match_log["VAR Checks"].apply(time_to_seconds) > 0).sum()
-        total_fixtures_count = len(st.session_state.match_log)
+        total_league_var_sec = active_df["VAR Checks"].apply(time_to_seconds).sum()
+        matches_with_var = (active_df["VAR Checks"].apply(time_to_seconds) > 0).sum()
+        total_fixtures_count = len(active_df)
         pct_var_fixtures = round((matches_with_var / total_fixtures_count * 100), 1) if total_fixtures_count > 0 else 0.0
 
-        longest_var_sec = st.session_state.match_log["VAR Checks"].apply(time_to_seconds).max()
-        longest_var_match = st.session_state.match_log[st.session_state.match_log["VAR Checks"].apply(time_to_seconds) == longest_var_sec]
+        longest_var_sec = active_df["VAR Checks"].apply(time_to_seconds).max()
+        longest_var_match = active_df[active_df["VAR Checks"].apply(time_to_seconds) == longest_var_sec]
         longest_var_label = "None"
         if not longest_var_match.empty and longest_var_sec > 0:
             top_row = longest_var_match.iloc[0]
@@ -1092,7 +1172,7 @@ Full breakdown tracked by @EffectiveMins #PremierLeague #PL #{selected_team.repl
         st.divider()
 
         st.markdown("##### ⏱️ Match Review Log (Ranked by Check Length)")
-        match_var_log = st.session_state.match_log.copy()
+        match_var_log = active_df.copy()
         match_var_log["VAR_Sec"] = match_var_log["VAR Checks"].apply(time_to_seconds)
         match_var_log["Total_Sec"] = match_var_log["Total Match Time"].apply(time_to_seconds)
         match_var_log = match_var_log[match_var_log["VAR_Sec"] > 0].sort_values(by="VAR_Sec", ascending=False)
