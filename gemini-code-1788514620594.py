@@ -68,7 +68,6 @@ CLUB_BADGES = {
 ALL_KNOWN_TEAMS = sorted(list(CLUB_BADGES.keys()))
 
 CLUB_PATTERNS = [
-    # Premier League
     ("Nottingham Forest", ["nottingham forest", "nottingham", "nott'm forest", "forest"]),
     ("Manchester United", ["manchester united", "manchester utd", "man utd", "man united"]),
     ("Manchester City", ["manchester city", "man city"]),
@@ -89,8 +88,6 @@ CLUB_PATTERNS = [
     ("Fulham", ["fulham"]),
     ("Liverpool", ["liverpool"]),
     ("Sunderland", ["sunderland"]),
-
-    # Champions League Contenders
     ("Real Madrid", ["real madrid", "madrid"]),
     ("Barcelona", ["barcelona", "barca"]),
     ("Bayern Munich", ["bayern munich", "bayern münchen", "bayern"]),
@@ -121,18 +118,47 @@ MATCH_COLUMNS = [
     "Home Throw Ins", "Away Throw Ins",
     "Home Corners", "Away Corners",
     "Home Other", "Away Other",
-    "Home Total Wasted", "Away Total Wasted"
+    "Home Total Wasted", "Away Total Wasted",
+    # Match Performance & Creation Metrics
+    "Home Possession", "Away Possession",
+    "Home xG", "Away xG",
+    "Home xGOT", "Away xGOT",
+    "Home Total Shots", "Away Total Shots",
+    "Home Shots On Target", "Away Shots On Target",
+    "Home Shots Inside Box", "Away Shots Inside Box",
+    "Home Passes Opp Half", "Away Passes Opp Half",
+    "Home Passes Final Third", "Away Passes Final Third",
+    "Home Key Passes", "Away Key Passes",
+    "Home Final Third Won", "Away Final Third Won",
+    "Home Possession Lost", "Away Possession Lost",
+    "Home Fouls", "Away Fouls",
+    "Home Yellow Cards", "Away Yellow Cards",
+    "Home Red Cards", "Away Red Cards"
 ]
 
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
 
 # --- UTILITY HELPERS ---
-def clean_val(val) -> str:
+def clean_val(val, default="00:00") -> str:
     if pd.isna(val) or val is None:
-        return "00:00"
+        return default
     s = str(val).strip().replace("–", "-").replace("—", "-")
-    return s if s else "00:00"
+    return s if s else default
+
+def to_float(val, default=0.0) -> float:
+    try:
+        s = str(val).replace("%", "").strip()
+        return float(s)
+    except (ValueError, TypeError):
+        return default
+
+def to_int(val, default=0) -> int:
+    try:
+        s = str(val).replace("%", "").strip()
+        return int(float(s))
+    except (ValueError, TypeError):
+        return default
 
 def time_to_seconds(val: str) -> int:
     s_val = clean_val(val)
@@ -158,7 +184,6 @@ def clean_html_to_text(html_str: str) -> str:
     return clean
 
 def detect_competition(filename: str, text: str) -> str:
-    """Detects whether a fixture belongs to Champions League or Premier League."""
     combined = f"{filename} {text}".lower()
     if any(marker in combined for marker in ["champions league", "champions-league", "ucl", "uefa champions"]):
         return "Champions League"
@@ -201,6 +226,14 @@ def detect_clubs(filename: str, text: str):
 
     return "Arsenal", "Aston Villa"
 
+def extract_metric_pair(text: str, label_regex: str, default=("0", "0")):
+    """Extracts [HomeValue]\n[Label]\n[AwayValue] from 365Scores statistics sections."""
+    pattern = rf"([^\r\n]+)\r?\n\s*{label_regex}\s*\r?\n\s*([^\r\n]+)"
+    match = re.search(pattern, text, re.IGNORECASE)
+    if match:
+        return match.group(1).strip(), match.group(2).strip()
+    return default
+
 def parse_match_data(filename: str, raw_content: str) -> dict:
     text = clean_html_to_text(raw_content) if ("<html" in raw_content.lower() or "<body" in raw_content.lower()) else raw_content
     stats = {}
@@ -218,6 +251,7 @@ def parse_match_data(filename: str, raw_content: str) -> dict:
         gw_m = re.search(r"(?:Round|Matchday)\s+(\d+)", text, re.IGNORECASE)
     stats["Gameweek"] = int(gw_m.group(1)) if gw_m else 1
 
+    # 1. Stoppage & Timing Section
     play_section = text
     if "Actual Play Time" in text:
         play_section = text.split("Actual Play Time", 1)[1]
@@ -268,10 +302,30 @@ def parse_match_data(filename: str, raw_content: str) -> dict:
             stats[f"Home {label}"] = "00:00"
             stats[f"Away {label}"] = "00:00"
 
+    # 2. Performance, Territory & Chance Creation Section
+    stats_section = text.split("Top Stats", 1)[1] if "Top Stats" in text else text
+
+    stats["Home Possession"], stats["Away Possession"] = extract_metric_pair(stats_section, r"Possession", ("50%", "50%"))
+    stats["Home xG"], stats["Away xG"] = extract_metric_pair(stats_section, r"Expected\s+Goals", ("0.00", "0.00"))
+    stats["Home Total Shots"], stats["Away Total Shots"] = extract_metric_pair(stats_section, r"Total\s+Shots", ("0", "0"))
+    stats["Home Shots On Target"], stats["Away Shots On Target"] = extract_metric_pair(stats_section, r"Shots\s+On\s+Target", ("0", "0"))
+
+    # Granular passing & shooting sections
+    stats["Home xGOT"], stats["Away xGOT"] = extract_metric_pair(stats_section, r"Expected\s+Goals\s+On\s+Target", (stats["Home xG"], stats["Away xG"]))
+    stats["Home Shots Inside Box"], stats["Away Shots Inside Box"] = extract_metric_pair(stats_section, r"Shots\s+Inside\s+The\s+Box", ("0", "0"))
+    stats["Home Passes Opp Half"], stats["Away Passes Opp Half"] = extract_metric_pair(stats_section, r"Passes\s+Opposition\s+Half", ("0", "0"))
+    stats["Home Passes Final Third"], stats["Away Passes Final Third"] = extract_metric_pair(stats_section, r"Passes\s+Into\s+Final\s+Third", ("0", "0"))
+    stats["Home Key Passes"], stats["Away Key Passes"] = extract_metric_pair(stats_section, r"Key\s+Passes", ("0", "0"))
+    stats["Home Final Third Won"], stats["Away Final Third Won"] = extract_metric_pair(stats_section, r"Final\s+Third\s+Possession\s+Won", ("0", "0"))
+    stats["Home Possession Lost"], stats["Away Possession Lost"] = extract_metric_pair(stats_section, r"Possession\s+Lost", ("0", "0"))
+    stats["Home Fouls"], stats["Away Fouls"] = extract_metric_pair(stats_section, r"Fouls", ("0", "0"))
+    stats["Home Yellow Cards"], stats["Away Yellow Cards"] = extract_metric_pair(stats_section, r"Yellow\s+Cards", ("0", "0"))
+    stats["Home Red Cards"], stats["Away Red Cards"] = extract_metric_pair(stats_section, r"Red\s+Cards", ("0", "0"))
+
     stats["_is_valid"] = not (stats["Actual In-Play"] == "00:00" and stats["Home Total Wasted"] == "00:00")
     return stats
 
-# --- DATABASE LOAD WITH SCHEMA NORMALISATION ---
+# --- DATABASE LOAD WITH SCHEMA RECOVERY ---
 if os.path.exists(DATA_FILE):
     try:
         st.session_state.match_log = pd.read_csv(DATA_FILE, encoding="utf-8")
@@ -280,19 +334,34 @@ if os.path.exists(DATA_FILE):
 else:
     st.session_state.match_log = pd.DataFrame(columns=MATCH_COLUMNS)
 
-# Ensure 'Competition' exists for backward compatibility
 if "Competition" not in st.session_state.match_log.columns:
     st.session_state.match_log.insert(0, "Competition", "Premier League")
 
+st.session_state.match_log["Competition"] = (
+    st.session_state.match_log["Competition"]
+    .fillna("Premier League")
+    .replace("", "Premier League")
+)
+
+# Backfill new metric columns if loading an older CSV database
 for col in MATCH_COLUMNS:
     if col not in st.session_state.match_log.columns:
-        st.session_state.match_log[col] = "00:00" if "Time" in col or "In-Play" in col or "Added" in col or "Wasted" in col else 0
+        if any(term in col for term in ["xG", "xGOT"]):
+            st.session_state.match_log[col] = "0.00"
+        elif any(term in col for term in ["Shots", "Passes", "Won", "Lost", "Fouls", "Cards"]):
+            st.session_state.match_log[col] = "0"
+        elif "Possession" in col:
+            st.session_state.match_log[col] = "50%"
+        elif any(term in col for term in ["Time", "In-Play", "Added", "Wasted"]):
+            st.session_state.match_log[col] = "00:00"
+        else:
+            st.session_state.match_log[col] = 0
 
-st.title("⏱️ EffectiveMins: Football Stoppage Tracker")
+st.title("⏱️ EffectiveMins: Football Analytics Engine")
 
-# --- SIDEBAR: COMPETITION FILTER & SPREADSHEET SYNC ---
+# --- SIDEBAR: COMPETITION FILTER & DATA SYNC ---
 with st.sidebar:
-    st.header("🏆 Competition View")
+    st.header("🏆 Competition Filter")
     active_competition = st.radio(
         "Active Dashboard:",
         ["Premier League", "Champions League", "All Competitions"],
@@ -313,10 +382,12 @@ with st.sidebar:
 
             if "Competition" not in df_imported.columns:
                 df_imported.insert(0, "Competition", "Premier League")
+            else:
+                df_imported["Competition"] = df_imported["Competition"].fillna("Premier League").replace("", "Premier League")
 
             for col in MATCH_COLUMNS:
                 if col not in df_imported.columns:
-                    df_imported[col] = "00:00"
+                    df_imported[col] = "00:00" if "Time" in col else "0"
 
             st.session_state.match_log = df_imported[MATCH_COLUMNS].copy()
             st.session_state.match_log.to_csv(DATA_FILE, index=False, encoding="utf-8")
@@ -368,7 +439,7 @@ with st.sidebar:
                     st.rerun()
 
     st.divider()
-    st.markdown("**@EffectiveMins** Analytics Engine")
+    st.markdown("**@EffectiveMins** Analytics Platform")
 
 # --- MATCH INGESTION SECTION ---
 with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.empty):
@@ -377,7 +448,7 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
     with ingest_tab1:
         st.markdown("""
         Drag and drop your saved 365Scores match files.
-        > **Automatic Competition Engine:** The parser automatically reads whether a report is **Premier League** or **Champions League**.
+        > **Full Stats Extraction:** Automatically extracts in-play times, dead-ball waste, $xG$, $xGOT$, territory, turnovers, and discipline.
         """)
 
         uploaded_files = st.file_uploader(
@@ -407,7 +478,10 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
             st.write("---")
             st.markdown(f"##### 🔍 Staged Matches ({len(df_preview)} Detected)")
 
-            preview_cols = ["Status", "Competition", "Gameweek", "Home Team", "Away Team", "Actual In-Play", "Total Match Time", "Home Total Wasted", "Away Total Wasted"]
+            preview_cols = [
+                "Status", "Competition", "Gameweek", "Home Team", "Away Team",
+                "Actual In-Play", "Home xG", "Away xG", "Home Total Wasted", "Away Total Wasted"
+            ]
             st.dataframe(df_preview[preview_cols], use_container_width=True, hide_index=True)
 
             valid_matches = [m for m in parsed_batch if m["_is_valid"]]
@@ -527,6 +601,25 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
                 man_htot = st.text_input("Home Tot", placeholder="17:46")
                 man_atot = st.text_input("Away Tot", placeholder="16:54")
 
+            st.markdown("##### Performance & Shot Quality (Home vs Away)")
+            sh1, sh2, sh3, sh4 = st.columns(4)
+            with sh1:
+                st.caption("xG")
+                man_hxg = st.text_input("Home xG", placeholder="1.88")
+                man_axg = st.text_input("Away xG", placeholder="0.20")
+            with sh2:
+                st.caption("Possession %")
+                man_hpos = st.text_input("Home Pos %", placeholder="64%")
+                man_apos = st.text_input("Away Pos %", placeholder="36%")
+            with sh3:
+                st.caption("Final Third Possession Won")
+                man_hftw = st.text_input("Home FT Won", placeholder="6")
+                man_aftw = st.text_input("Away FT Won", placeholder="2")
+            with sh4:
+                st.caption("Fouls Committed")
+                man_hfl = st.text_input("Home Fouls", placeholder="10")
+                man_afl = st.text_input("Away Fouls", placeholder="13")
+
             if st.form_submit_button("Save Record Manually", type="primary"):
                 manual_row = {
                     "Competition": man_comp,
@@ -534,7 +627,7 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
                     "Home Team": man_home,
                     "Away Team": man_away,
                     "Actual In-Play": clean_val(man_inplay),
-                    "Total Match Time": clean_val(man_total or "90:00"),
+                    "Total Match Time": clean_val(man_total, "90:00"),
                     "VAR Checks": clean_val(man_var),
                     "Game Stops": int(man_stops),
                     "Longest In-Play": clean_val(man_longest),
@@ -552,7 +645,26 @@ with st.expander("➕ Log New Fixtures", expanded=st.session_state.match_log.emp
                     "Home Other": clean_val(man_hot),
                     "Away Other": clean_val(man_aot),
                     "Home Total Wasted": clean_val(man_htot),
-                    "Away Total Wasted": clean_val(man_atot)
+                    "Away Total Wasted": clean_val(man_atot),
+                    "Home Possession": clean_val(man_hpos, "50%"),
+                    "Away Possession": clean_val(man_apos, "50%"),
+                    "Home xG": clean_val(man_hxg, "0.00"),
+                    "Away xG": clean_val(man_axg, "0.00"),
+                    "Home xGOT": clean_val(man_hxg, "0.00"),
+                    "Away xGOT": clean_val(man_axg, "0.00"),
+                    "Home Total Shots": "0", "Away Total Shots": "0",
+                    "Home Shots On Target": "0", "Away Shots On Target": "0",
+                    "Home Shots Inside Box": "0", "Away Shots Inside Box": "0",
+                    "Home Passes Opp Half": "0", "Away Passes Opp Half": "0",
+                    "Home Passes Final Third": "0", "Away Passes Final Third": "0",
+                    "Home Key Passes": "0", "Away Key Passes": "0",
+                    "Home Final Third Won": clean_val(man_hftw, "0"),
+                    "Away Final Third Won": clean_val(man_aftw, "0"),
+                    "Home Possession Lost": "0", "Away Possession Lost": "0",
+                    "Home Fouls": clean_val(man_hfl, "0"),
+                    "Away Fouls": clean_val(man_afl, "0"),
+                    "Home Yellow Cards": "0", "Away Yellow Cards": "0",
+                    "Home Red Cards": "0", "Away Red Cards": "0"
                 }
                 st.session_state.match_log = pd.concat([st.session_state.match_log, pd.DataFrame([manual_row])], ignore_index=True)
                 st.session_state.match_log.to_csv(DATA_FILE, index=False, encoding="utf-8")
@@ -569,11 +681,12 @@ else:
 
 # --- STANDINGS & VISUAL ANALYTICS ---
 if active_df.empty:
-    st.info(f"No fixtures recorded for **{active_competition}** yet. Upload match files above to populate.")
+    st.info(f"No fixtures recorded for **{active_competition}** yet. Select **All Competitions** in the sidebar or upload match files above.")
 else:
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         f"🏆 {active_competition} Standings",
-        "🌊 Flow & Fragmentation",
+        "🎯 Control, xG & Territory",
+        "🌊 Flow & Disruption",
         "⏱️ Added Time Integrity",
         "📺 VAR Stoppage Impact",
         "📝 Live Spreadsheet Editor & Export"
@@ -702,7 +815,8 @@ else:
                 [
                     "Dead-Ball Delay Profile (Bar Chart)",
                     "In-Play Trend Across Rounds (Line Chart)",
-                    "Time Wasting Trend Across Rounds (Line Chart)"
+                    "Time Wasting Trend Across Rounds (Line Chart)",
+                    "High Press & Chance Creation (Bar Chart)"
                 ],
                 horizontal=False
             )
@@ -843,7 +957,7 @@ Round-by-round breakdown:
 Follow @EffectiveMins for full stoppage analytics {comp_tag} #{selected_team.replace(' ', '')}"""
                 st.text_area("Draft Trend Post", value=trend_post, height=230)
 
-        else:
+        elif chart_type == "Time Wasting Trend Across Rounds (Line Chart)":
             with cg1:
                 fig, ax = plt.subplots(figsize=(10, 5.5), facecolor="#0e1621")
                 ax.set_facecolor("#0e1621")
@@ -924,10 +1038,133 @@ Round-by-round stoppage delay:
 Full stoppage stats tracked by @EffectiveMins {comp_tag} #{selected_team.replace(' ', '')}"""
                 st.text_area("Draft Waste Trend Post", value=waste_post, height=230)
 
+        # OPTION 4: HIGH PRESS & CHANCE CREATION PROFILE
+        else:
+            with cg1:
+                fig, ax = plt.subplots(figsize=(10, 5.5), facecolor="#0e1621")
+                ax.set_facecolor("#0e1621")
+
+                # Aggregate team advanced performance stats
+                t_xg = 0.0
+                t_sot = 0.0
+                t_ft_won = 0.0
+                t_fouls = 0.0
+                for _, m in team_fixtures.iterrows():
+                    is_h = (m["Home Team"] == selected_team)
+                    t_xg += to_float(m["Home xG"] if is_h else m["Away xG"])
+                    t_sot += to_float(m["Home Shots On Target"] if is_h else m["Away Shots On Target"])
+                    t_ft_won += to_float(m["Home Final Third Won"] if is_h else m["Away Final Third Won"])
+                    t_fouls += to_float(m["Home Fouls"] if is_h else m["Away Fouls"])
+
+                m_count = len(team_fixtures) if len(team_fixtures) > 0 else 1
+                cat_names = ["xG per 90", "Shots On Target / 90", "High Turnovers Won / 90", "Fouls Committed / 90"]
+                cat_vals = [round(t_xg / m_count, 2), round(t_sot / m_count, 1), round(t_ft_won / m_count, 1), round(t_fouls / m_count, 1)]
+
+                ax.bar(cat_names, cat_vals, color=["#00d2ff", "#2194ff", "#5bb849", "#ffb800"], edgecolor="#ffffff", width=0.55)
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                ax.spines['bottom'].set_color('#888888')
+                ax.spines['left'].set_color('#888888')
+                ax.tick_params(colors='#ffffff', labelsize=10)
+                ax.set_title(f"{selected_team.upper()} — Match Control & High-Press Profile", color="#ffffff", fontsize=15, weight="bold", pad=15)
+                fig.text(0.82, 0.02, "@EffectiveMins", color="#888888", fontsize=10, style='italic')
+
+                for idx, v in enumerate(cat_vals):
+                    ax.annotate(str(v), (idx, v), textcoords="offset points", xytext=(0, 6), ha='center', color='#ffffff', weight='bold')
+
+                st.pyplot(fig)
+
+            with cg2:
+                if badge_url:
+                    st.image(badge_url, width=70)
+                st.markdown("### Ready-to-Post Copy")
+                comp_tag = "#UCL" if "Champions" in active_competition else "#PremierLeague #PL"
+                post_ctrl = f"""📊 Match Control & Pressing: {selected_team} ({active_competition})
+
+• Expected Goals (xG): {round(t_xg / m_count, 2)} per 90
+• Shots on Target: {round(t_sot / m_count, 1)} per 90
+• Final Third Poss Won (High Turnovers): {round(t_ft_won / m_count, 1)} per 90
+• Tactical Fouls Committed: {round(t_fouls / m_count, 1)} per 90
+
+Follow @EffectiveMins for full match efficiency analytics {comp_tag} #{selected_team.replace(' ', '')}"""
+                st.text_area("Draft Control Post", value=post_ctrl, height=200)
+
     # ==========================================
-    # TAB 2: FLOW & FRAGMENTATION
+    # TAB 2: CONTROL, XG & TERRITORY
     # ==========================================
     with tab2:
+        st.subheader(f"🎯 {active_competition} Control, xG & High Pressing")
+        st.caption("Profiling chance quality, territorial penetration, high-turnover pressing, and possession security.")
+
+        adv_rows = []
+        for team in unique_logged_teams:
+            h_m = active_df[active_df["Home Team"] == team]
+            a_m = active_df[active_df["Away Team"] == team]
+            t_count = len(h_m) + len(a_m)
+            if t_count == 0:
+                continue
+
+            # Parse numeric stats
+            xg_tot = h_m["Home xG"].apply(to_float).sum() + a_m["Away xG"].apply(to_float).sum()
+            xgot_tot = h_m["Home xGOT"].apply(to_float).sum() + a_m["Away xGOT"].apply(to_float).sum()
+            sot_tot = h_m["Home Shots On Target"].apply(to_float).sum() + a_m["Away Shots On Target"].apply(to_float).sum()
+            box_tot = h_m["Home Shots Inside Box"].apply(to_float).sum() + a_m["Away Shots Inside Box"].apply(to_float).sum()
+            opp_pass_tot = h_m["Home Passes Opp Half"].apply(to_float).sum() + a_m["Away Passes Opp Half"].apply(to_float).sum()
+            ft_pass_tot = h_m["Home Passes Final Third"].apply(to_float).sum() + a_m["Away Passes Final Third"].apply(to_float).sum()
+            ft_won_tot = h_m["Home Final Third Won"].apply(to_float).sum() + a_m["Away Final Third Won"].apply(to_float).sum()
+            pos_lost_tot = h_m["Home Possession Lost"].apply(to_float).sum() + a_m["Away Possession Lost"].apply(to_float).sum()
+            fouls_tot = h_m["Home Fouls"].apply(to_float).sum() + a_m["Away Fouls"].apply(to_float).sum()
+
+            adv_rows.append({
+                "Badge": CLUB_BADGES.get(team, "https://imagecache.365scores.com/image/upload/f_auto,w_48,h_48,c_limit,q_auto:eco,dpr_2/v5/competitors/default"),
+                "Team": team,
+                "Matches": t_count,
+                "Avg xG / 90": round(xg_tot / t_count, 2),
+                "Avg xGOT / 90": round(xgot_tot / t_count, 2),
+                "Shots on Target / 90": round(sot_tot / t_count, 1),
+                "Box Shots / 90": round(box_tot / t_count, 1),
+                "Final Third Entries / 90": round(ft_pass_tot / t_count, 1),
+                "Opp Half Passes / 90": round(opp_pass_tot / t_count, 1),
+                "High Turnovers Won / 90": round(ft_won_tot / t_count, 1),
+                "Possession Lost / 90": round(pos_lost_tot / t_count, 1),
+                "Fouls Committed / 90": round(fouls_tot / t_count, 1),
+            })
+
+        df_adv = pd.DataFrame(adv_rows)
+
+        sort_adv_by = st.selectbox(
+            "Sort Performance Table By:",
+            [
+                ("Avg xG / 90", "Expected Goals (xG per 90 - Highest First)", False),
+                ("High Turnovers Won / 90", "High Pressing / Turnovers Won (Highest First)", False),
+                ("Final Third Entries / 90", "Territorial Penetration / Final Third Passes (Highest First)", False),
+                ("Shots on Target / 90", "Shots on Target (Highest First)", False),
+                ("Fouls Committed / 90", "Tactical Fouls (Highest First)", False)
+            ],
+            format_func=lambda x: x[1]
+        )
+
+        df_adv = df_adv.sort_values(by=sort_adv_by[0], ascending=sort_adv_by[2])
+
+        adv_cols_show = [
+            "Badge", "Team", "Matches", "Avg xG / 90", "Avg xGOT / 90",
+            "Shots on Target / 90", "Box Shots / 90", "Final Third Entries / 90",
+            "High Turnovers Won / 90", "Fouls Committed / 90"
+        ]
+
+        st.dataframe(
+            df_adv[adv_cols_show],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Badge": st.column_config.ImageColumn("Badge", width="small")
+            }
+        )
+
+    # ==========================================
+    # TAB 3: FLOW & DISRUPTION
+    # ==========================================
+    with tab3:
         st.subheader(f"🌊 {active_competition} Rhythm & Whistle Disruptions")
         st.caption("Measuring game disruption, whistle frequency, and continuous play streaks.")
 
@@ -1035,9 +1272,9 @@ Full stoppage stats tracked by @EffectiveMins {comp_tag} #{selected_team.replace
             st.dataframe(smooth_view, use_container_width=True, hide_index=True)
 
     # ==========================================
-    # TAB 3: ADDED TIME INTEGRITY
+    # TAB 4: ADDED TIME INTEGRITY
     # ==========================================
-    with tab3:
+    with tab4:
         st.subheader(f"⏱️ {active_competition} Added Time Integrity")
         st.caption("Tracking how much extra time was announced, how long matches actually ran, and actual ball-in-play during stoppage.")
 
@@ -1075,9 +1312,9 @@ Full stoppage stats tracked by @EffectiveMins {comp_tag} #{selected_team.replace
         st.dataframe(df_at_view, use_container_width=True, hide_index=True)
 
     # ==========================================
-    # TAB 4: VAR REVIEW IMPACT
+    # TAB 5: VAR REVIEW IMPACT
     # ==========================================
-    with tab4:
+    with tab5:
         st.subheader(f"📺 {active_competition} VAR Review Impact")
         st.caption("Tracking how video reviews affect stoppage time, flow, and total dead time per club.")
 
@@ -1189,9 +1426,9 @@ Full stoppage stats tracked by @EffectiveMins {comp_tag} #{selected_team.replace
             st.dataframe(show_match_var, use_container_width=True, hide_index=True)
 
     # ==========================================
-    # TAB 5: LIVE SPREADSHEET EDITOR
+    # TAB 6: LIVE SPREADSHEET EDITOR
     # ==========================================
-    with tab5:
+    with tab6:
         st.markdown("💡 **Tip:** Double-click any cell to edit numbers directly. Select rows using the checkboxes on the left and hit `Delete` on your keyboard to remove specific fixtures.")
 
         edited_df = st.data_editor(
